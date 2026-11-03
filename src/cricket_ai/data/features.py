@@ -41,8 +41,16 @@ def chase_states(
     m["max_balls"] = [
         overs_to_balls(o, int(b)) for o, b in zip(m.target_overs, m.balls_per_over, strict=True)
     ]
-    cols = ["match_id", "match_type", "start_date", "season", "venue", "winner",
-            "target_runs", "max_balls"]
+    cols = [
+        "match_id",
+        "match_type",
+        "start_date",
+        "season",
+        "venue",
+        "winner",
+        "target_runs",
+        "max_balls",
+    ]
 
     d = deliveries[(deliveries.innings == 2) & ~deliveries.is_super_over]
     d = d.merge(m[cols], on="match_id", how="inner")
@@ -78,10 +86,18 @@ def chase_states(
     # Momentum: runs and wickets over the last 12 deliveries (rolling within each match).
     g = d.groupby("match_id", sort=False)
     out["runs_last_12_balls"] = (
-        g.runs_total.rolling(12, min_periods=1).sum().reset_index(level=0, drop=True).reindex(d.index).values
+        g.runs_total.rolling(12, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+        .reindex(d.index)
+        .values
     )
     out["wickets_last_12_balls"] = (
-        g.wickets_on_ball.rolling(12, min_periods=1).sum().reset_index(level=0, drop=True).reindex(d.index).values
+        g.wickets_on_ball.rolling(12, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+        .reindex(d.index)
+        .values
     )
 
     out["chasing_team_won"] = (d.winner.values == out.batting_team.values).astype(np.int8)

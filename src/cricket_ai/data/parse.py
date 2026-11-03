@@ -116,7 +116,12 @@ def parse_match_dict(data: dict[str, Any], match_id: str) -> ParsedMatch:
     for team, names in (info.get("players", {}) or {}).items():
         for name in names:
             parsed.players.append(
-                {"match_id": match_id, "team": team, "player": name, "player_id": registry.get(name)}
+                {
+                    "match_id": match_id,
+                    "team": team,
+                    "player": name,
+                    "player_id": registry.get(name),
+                }
             )
 
     for innings_no, inn in enumerate(innings_list, start=1):

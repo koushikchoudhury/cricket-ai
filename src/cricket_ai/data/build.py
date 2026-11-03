@@ -53,7 +53,9 @@ def _safe_parse(path: Path) -> tuple[str, ParsedMatch | None, str | None]:
         return str(path), None, f"{type(exc).__name__}: {exc}"
 
 
-def build_tables(raw_dir: Path, workers: int | None = None, limit: int | None = None) -> BuildResult:
+def build_tables(
+    raw_dir: Path, workers: int | None = None, limit: int | None = None
+) -> BuildResult:
     files = sorted(Path(raw_dir).glob("*.json"))
     if limit:
         files = files[:limit]
@@ -87,7 +89,12 @@ def build_tables(raw_dir: Path, workers: int | None = None, limit: int | None = 
         report.examples["unparseable_files"] = [
             {"file": k, "error": v} for k, v in list(failed.items())[:5]
         ]
-    log.info("Parsed %d matches, %d deliveries (%d files failed)", len(matches), len(deliveries), len(failed))
+    log.info(
+        "Parsed %d matches, %d deliveries (%d files failed)",
+        len(matches),
+        len(deliveries),
+        len(failed),
+    )
     return BuildResult(matches, deliveries, players, report, failed)
 
 

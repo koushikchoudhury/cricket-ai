@@ -43,10 +43,10 @@ def validate(matches: pd.DataFrame, deliveries: pd.DataFrame) -> QualityReport:
     # --- errors ---
     _record(r, "errors", "duplicate_match_id", matches[matches.duplicated("match_id", keep=False)])
     key = ["match_id", "innings", "delivery_seq"]
-    _record(r, "errors", "duplicate_delivery_key", deliveries[deliveries.duplicated(key, keep=False)])
-    bad_total = deliveries[
-        deliveries.runs_total != deliveries.runs_batter + deliveries.runs_extras
-    ]
+    _record(
+        r, "errors", "duplicate_delivery_key", deliveries[deliveries.duplicated(key, keep=False)]
+    )
+    bad_total = deliveries[deliveries.runs_total != deliveries.runs_batter + deliveries.runs_extras]
     _record(r, "errors", "runs_total_mismatch", bad_total[key])
     bad_extras = deliveries[deliveries.runs_extras != deliveries[list(EXTRA_KEYS)].sum(axis=1)]
     _record(r, "errors", "extras_breakdown_mismatch", bad_extras[key])
@@ -65,5 +65,10 @@ def validate(matches: pd.DataFrame, deliveries: pd.DataFrame) -> QualityReport:
     )
     long_overs = legal_per_over[legal_per_over.legal > legal_per_over.balls_per_over]
     _record(r, "warnings", "overs_with_extra_legal_balls", long_overs)
-    _record(r, "warnings", "no_result_or_unknown", matches[matches.result.isin(["no result", "unknown"])])
+    _record(
+        r,
+        "warnings",
+        "no_result_or_unknown",
+        matches[matches.result.isin(["no result", "unknown"])],
+    )
     return r
