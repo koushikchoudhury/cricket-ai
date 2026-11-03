@@ -1,0 +1,73 @@
+{
+  "meta": {"data_version": "1.1.0", "created": "2026-11-04", "revision": 1},
+  "info": {
+    "balls_per_over": 6,
+    "city": "Kolkata",
+    "dates": ["2024-04-10"],
+    "event": {"name": "Fixture League", "match_number": 1},
+    "gender": "male",
+    "match_type": "T20",
+    "outcome": {"winner": "Team B", "by": {"wickets": 9}},
+    "overs": 2,
+    "player_of_match": ["B2"],
+    "players": {
+      "Team A": ["A1", "A2", "A3", "A4", "A5", "A6"],
+      "Team B": ["B1", "B2", "B3", "B4"]
+    },
+    "registry": {"people": {"A1": "a1", "A2": "a2", "A3": "a3", "A4": "a4", "A5": "a5", "A6": "a6",
+                            "B1": "b1", "B2": "b2", "B3": "b3", "B4": "b4"}},
+    "season": 2024,
+    "team_type": "club",
+    "teams": ["Team A", "Team B"],
+    "toss": {"decision": "field", "winner": "Team B"},
+    "venue": "Eden Gardens"
+  },
+  "innings": [
+    {
+      "team": "Team A",
+      "overs": [
+        {"over": 0, "deliveries": [
+          {"batter": "A1", "bowler": "B1", "non_striker": "A2", "runs": {"batter": 1, "extras": 0, "total": 1}},
+          {"batter": "A2", "bowler": "B1", "non_striker": "A1", "extras": {"wides": 1}, "runs": {"batter": 0, "extras": 1, "total": 1}},
+          {"batter": "A2", "bowler": "B1", "non_striker": "A1", "runs": {"batter": 4, "extras": 0, "total": 4}},
+          {"batter": "A2", "bowler": "B1", "non_striker": "A1", "extras": {"legbyes": 1}, "runs": {"batter": 0, "extras": 1, "total": 1}},
+          {"batter": "A1", "bowler": "B1", "non_striker": "A2", "runs": {"batter": 0, "extras": 0, "total": 0},
+           "wickets": [{"player_out": "A1", "kind": "caught", "fielders": [{"name": "B2"}]}]},
+          {"batter": "A3", "bowler": "B1", "non_striker": "A2", "runs": {"batter": 6, "extras": 0, "total": 6}},
+          {"batter": "A3", "bowler": "B1", "non_striker": "A2", "extras": {"noballs": 1}, "runs": {"batter": 2, "extras": 1, "total": 3}},
+          {"batter": "A3", "bowler": "B1", "non_striker": "A2", "runs": {"batter": 0, "extras": 0, "total": 0}}
+        ]},
+        {"over": 1, "deliveries": [
+          {"batter": "A2", "bowler": "B2", "non_striker": "A3", "runs": {"batter": 1, "extras": 0, "total": 1}},
+          {"batter": "A3", "bowler": "B2", "non_striker": "A2", "runs": {"batter": 0, "extras": 0, "total": 0},
+           "wickets": [{"player_out": "A2", "kind": "run out", "fielders": [{"name": "B1"}]}]},
+          {"batter": "A4", "bowler": "B2", "non_striker": "A3", "runs": {"batter": 2, "extras": 0, "total": 2}},
+          {"batter": "A4", "bowler": "B2", "non_striker": "A3", "runs": {"batter": 0, "extras": 0, "total": 0}},
+          {"batter": "A4", "bowler": "B2", "non_striker": "A3", "runs": {"batter": 4, "extras": 0, "total": 4}},
+          {"batter": "A4", "bowler": "B2", "non_striker": "A3", "runs": {"batter": 1, "extras": 0, "total": 1}}
+        ]}
+      ]
+    },
+    {
+      "team": "Team B",
+      "target": {"overs": 2, "runs": 25},
+      "overs": [
+        {"over": 0, "deliveries": [
+          {"batter": "B1", "bowler": "A5", "non_striker": "B2", "runs": {"batter": 6, "extras": 0, "total": 6}},
+          {"batter": "B1", "bowler": "A5", "non_striker": "B2", "runs": {"batter": 6, "extras": 0, "total": 6}},
+          {"batter": "B1", "bowler": "A5", "non_striker": "B2", "runs": {"batter": 0, "extras": 0, "total": 0}},
+          {"batter": "B1", "bowler": "A5", "non_striker": "B2", "runs": {"batter": 4, "extras": 0, "total": 4}},
+          {"batter": "B1", "bowler": "A5", "non_striker": "B2", "runs": {"batter": 0, "extras": 0, "total": 0},
+           "wickets": [{"player_out": "B1", "kind": "bowled"}]},
+          {"batter": "B3", "bowler": "A5", "non_striker": "B2", "runs": {"batter": 1, "extras": 0, "total": 1}}
+        ]},
+        {"over": 1, "deliveries": [
+          {"batter": "B3", "bowler": "A6", "non_striker": "B2", "runs": {"batter": 4, "extras": 0, "total": 4}},
+          {"batter": "B3", "bowler": "A6", "non_striker": "B2", "runs": {"batter": 1, "extras": 0, "total": 1}},
+          {"batter": "B2", "bowler": "A6", "non_striker": "B3", "runs": {"batter": 1, "extras": 0, "total": 1}},
+          {"batter": "B3", "bowler": "A6", "non_striker": "B2", "runs": {"batter": 2, "extras": 0, "total": 2}}
+        ]}
+      ]
+    }
+  ]
+}

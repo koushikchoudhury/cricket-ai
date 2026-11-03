@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+/build/
+/dist/
+
+# Data and artifacts (never commit raw data, model weights or credentials)
+/data/
+/reports/
+/models/
+/runs/
+*.parquet
+*.pt
+*.pth
+*.onnx
+*.ckpt
+/mlruns/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.pem
+.aws/
+kubeconfig*
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
