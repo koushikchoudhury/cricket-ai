@@ -13,6 +13,8 @@ from cricket_ai import config
 app = typer.Typer(help="Cricket AI portfolio toolkit.", no_args_is_help=True)
 data_app = typer.Typer(help="Module 1: data pipeline.", no_args_is_help=True)
 app.add_typer(data_app, name="data")
+winprob_app = typer.Typer(help="Module 1: win-probability model.", no_args_is_help=True)
+app.add_typer(winprob_app, name="winprob")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -92,6 +94,69 @@ def report(dataset: str = typer.Argument("ipl"), min_balls: int = 300, top: int 
         md.append(f"\n## {name}\n\n{df.head(top).to_markdown()}\n")
     (out / "summary.md").write_text("".join(md))
     typer.echo(f"Reports written to {out}")
+
+
+@winprob_app.command("train")
+def winprob_train(
+    dataset: str = typer.Argument("ipl"),
+    max_epochs: int = typer.Option(60, help="Upper bound; early stopping usually ends sooner"),
+    device: str = typer.Option("auto", help="auto, cpu, cuda or mps"),
+    test_seasons: int = typer.Option(2, help="Most recent seasons held out for testing"),
+):
+    """Fit baselines and the PyTorch MLP, calibrate, evaluate on held-out seasons."""
+    import pandas as pd
+
+    from cricket_ai.winprob.data import date_split, season_split
+    from cricket_ai.winprob.evaluate import run_experiment
+    from cricket_ai.winprob.model import TrainConfig
+
+    states = pd.read_parquet(config.processed_dir(dataset) / "chase_states.parquet")
+    try:
+        split = season_split(states, test_seasons=test_seasons)
+    except ValueError:
+        split = date_split(states)  # too few seasons: fall back to a chronological split
+    cfg = TrainConfig(max_epochs=max_epochs, device=device)
+    result = run_experiment(
+        states,
+        report_dir=config.REPORTS_DIR / dataset / "winprob",
+        model_dir=config.MODELS_DIR / dataset,
+        cfg=cfg,
+        split=split,
+    )
+    typer.echo(f"Split: {result['split']}")
+    typer.echo(pd.DataFrame(result["test_metrics"]).T.to_markdown())
+    typer.echo(f"Report: {config.REPORTS_DIR / dataset / 'winprob' / 'report.md'}")
+
+
+@winprob_app.command("curve")
+def winprob_curve(
+    match_id: str = typer.Argument(..., help="Cricsheet match id (the JSON file name)"),
+    dataset: str = typer.Option("ipl"),
+    moments: int = typer.Option(5, help="How many key moments to list"),
+):
+    """Plot the win-probability curve of one chase and list its biggest swings."""
+    import pandas as pd
+
+    from cricket_ai.winprob.curve import key_moments, match_curve, plot_curve
+    from cricket_ai.winprob.model import load
+
+    proc = config.processed_dir(dataset)
+    states = pd.read_parquet(proc / "chase_states.parquet")
+    deliveries = pd.read_parquet(proc / "deliveries.parquet")
+    matches = pd.read_parquet(proc / "matches.parquet").set_index("match_id")
+    model = load(config.MODELS_DIR / dataset / "winprob_mlp.pt")
+    curve = match_curve(model, states, deliveries, match_id)
+    m = matches.loc[match_id]
+    title = (
+        f"{curve.batting_team.iloc[0]} chasing {int(curve.target.iloc[0])} v "
+        f"{curve.bowling_team.iloc[0]}, {m.start_date:%d %b %Y}"
+    )
+    out = config.REPORTS_DIR / dataset / "winprob" / "curves" / f"{match_id}.png"
+    plot_curve(curve, title, out)
+    typer.echo(title)
+    typer.echo(f"Winner: {m.winner}")
+    typer.echo(key_moments(curve, moments).to_markdown(index=False, floatfmt=".3f"))
+    typer.echo(f"Plot: {out}")
 
 
 @app.command("version")

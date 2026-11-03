@@ -61,7 +61,7 @@ def _innings(rng, batting, bowling_xi, batting_xi, target=None, overs=20):
     return out, runs, wkts
 
 
-def generate_match(seed: int, teams=("Kolkata", "Mumbai"), start=date(2020, 4, 1)):
+def generate_match(seed: int, teams=("Kolkata", "Mumbai"), start=date(2020, 4, 1), day_step=1):
     rng = random.Random(seed)
     t1, t2 = rng.sample(list(teams), 2)
     xi = {t: [f"{t[:3]}_{i}" for i in range(11)] for t in teams}
@@ -73,7 +73,7 @@ def generate_match(seed: int, teams=("Kolkata", "Mumbai"), start=date(2020, 4, 1
         outcome = {"result": "tie"}
     else:
         outcome = {"winner": t1, "by": {"runs": r1 - r2}}
-    day = start + timedelta(days=seed)
+    day = start + timedelta(days=seed * day_step)
     return {
         "meta": {"data_version": "1.1.0", "created": str(day), "revision": 1},
         "info": {
