@@ -5,7 +5,7 @@ Status: ✅ done · 🟡 in progress · ⚪ not started. Update this file in the
 | Module | Status | Next step |
 |---|---|---|
 | 1. Data, analytics, win probability | 🟡 | Train on real IPL data and review the report; first-innings model |
-| 2. Synthetic data | ⚪ | Decide the synthetic target table (match-level vs over-level sequences) |
+| 2. Synthetic data | 🟡 | Train the GAN on IPL overs (GPU) and record the evaluation |
 | 3. Video and image analysis | ⚪ | Source and label a small broadcast-frame dataset |
 | 4. Multimodal RAG | ⚪ | Build the scorecard and commentary corpus |
 | 5. LangGraph agent | ⚪ | Wrap modules 1–4 as tools |
@@ -87,17 +87,42 @@ Findings:
 **Deliverables:** a hand-written GAN, a CTGAN baseline and an evaluation report comparing
 synthetic and real data.
 
-- [ ] Choose the target: match-level summary rows and/or over-by-over sequences
-- [ ] Preprocessing: mode-specific normalisation for continuous columns, one-hot for categoricals
-- [ ] **Hand-written PyTorch GAN** (WGAN-GP with a conditional vector), trained on Colab/Kaggle
-- [ ] CTGAN baseline (SDV)
-- [ ] Fidelity: per-column distributions, correlation difference, KS and TV distances
-- [ ] Domain validity: run arithmetic, wickets ≤ 10, balls ≤ overs × 6
-- [ ] Utility: train on synthetic, test on real (TSTR) with the module 1 win-probability model
-- [ ] Privacy: distance to closest record, membership-inference check
-- [ ] Report and notebook
+- [x] Target: over-level table (start-of-over state + what happened), 11 mixed-type columns
+- [x] Eight cricket validity rules; real data passes all of them
+- [x] Match-based train/holdout split (generators never see holdout matches)
+- [x] Preprocessing: mode-specific normalisation (Bayesian GMM) for continuous columns, one-hot for discrete
+- [x] Conditional vector and training-by-sampling (log-frequency) for rare categories
+- [x] **Hand-written PyTorch GAN**: residual generator, PacGAN critic, WGAN-GP, Gumbel-softmax heads
+- [x] Baselines: independent marginals (floor) and CTGAN (`pip install ctgan`)
+- [x] Fidelity: TVD / KS per column, correlation difference, distribution and correlation plots
+- [x] Utility: TSTR vs TRTR on runs-in-over (MAE) and wicket-in-over (AUC)
+- [x] Privacy: distance to closest record vs holdout, membership-inference AUC
+- [x] CLI: `cricket-ai synth table / train / evaluate`
+- [x] Diagnostics: hand-written GAN matches the CTGAN library; critic dropout off learns ~3x faster
+- [ ] Train the GAN and CTGAN on IPL (GPU) and record the results
+- [ ] Optional: innings-level sequence generator so synthetic chases can feed the win-probability model
 
-**Metrics:** KS / TV distances, correlation difference, TSTR vs TRTR gap, DCR.
+**Metrics:** KS / TV distances, correlation difference, validity rate, TSTR vs TRTR gap, DCR ratio, membership AUC.
+
+### Diagnostics (2026-11-04, CPU in CI, 4,615 simulated overs, batch 100)
+
+The yardstick is the correlation between over number and runs at the start of the over
+(0.95 in real data), plus the mean correlation-matrix error (independent marginals: 0.135).
+
+| setting | time | corr error | r(over, runs at start) |
+|---|---|---|---|
+| hand-written, CTGAN defaults, 100 epochs | 35s | 0.113 | 0.07 |
+| CTGAN library, 100 epochs | 45s | 0.116 | 0.03 |
+| hand-written, 300 epochs | 104s | 0.076 | 0.58 |
+| **hand-written, critic dropout 0, 100 epochs** | 35s | 0.085 | 0.42 |
+| critic steps 5 + dropout 0, 60 epochs | 57s | 0.075 | 0.49 |
+| learning rate 1e-3, 100 epochs | 36s | 0.134 | 0.00 |
+
+Findings:
+- The hand-written GAN performs on par with the reference CTGAN implementation (no bug).
+- Both learn strong discrete-to-continuous links slowly; quality keeps improving with steps.
+- Removing critic dropout (CTGAN default 0.5) gave the best quality per unit of time, so it is
+  the new default. A higher learning rate hurt. A full IPL run (~20k steps) exceeds the best run here.
 
 ## 3. Video and image analysis
 
@@ -165,3 +190,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: Pipeline verified on real IPL data. Win-probability baselines, PyTorch MLP, calibration, evaluation and curves (PR #1).
 - 2026-11-04: Run 1 found era drift; added par score, recency weighting and Platt calibration.
 - 2026-11-04: Run 2 mixed (better calibration, worse discrimination); added ablation command.
+- 2026-11-04: Module 2 built: over-level table, hand-written GAN, baselines, full evaluation.

@@ -15,6 +15,8 @@ data_app = typer.Typer(help="Module 1: data pipeline.", no_args_is_help=True)
 app.add_typer(data_app, name="data")
 winprob_app = typer.Typer(help="Module 1: win-probability model.", no_args_is_help=True)
 app.add_typer(winprob_app, name="winprob")
+synth_app = typer.Typer(help="Module 2: synthetic data.", no_args_is_help=True)
+app.add_typer(synth_app, name="synth")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -199,6 +201,112 @@ def winprob_curve(
     typer.echo(f"Winner: {m.winner}")
     typer.echo(key_moments(curve, moments).to_markdown(index=False, floatfmt=".3f"))
     typer.echo(f"Plot: {out}")
+
+
+def _overs(dataset: str):
+    import pandas as pd
+
+    path = config.processed_dir(dataset) / "overs.parquet"
+    if not path.exists():
+        typer.echo(f"{path} not found. Run `cricket-ai synth table {dataset}` first.", err=True)
+        raise typer.Exit(code=1)
+    return pd.read_parquet(path)
+
+
+@synth_app.command("table")
+def synth_table(dataset: str = typer.Argument("ipl")):
+    """Build the over-level real table (data/processed/<dataset>/overs.parquet)."""
+    from cricket_ai.data.build import load_tables
+    from cricket_ai.synthetic.table import build_overs, split_by_match, validity
+
+    out_dir = config.processed_dir(dataset)
+    matches, deliveries, _ = load_tables(out_dir)
+    overs = build_overs(matches, deliveries)
+    overs.to_parquet(out_dir / "overs.parquet", index=False)
+    train, holdout = split_by_match(overs)
+    typer.echo(
+        f"{len(overs)} overs from {overs.match_id.nunique()} matches "
+        f"(train {len(train)}, holdout {len(holdout)})"
+    )
+    typer.echo(f"Real data validity: {validity(overs)}")
+
+
+@synth_app.command("train")
+def synth_train(
+    dataset: str = typer.Argument("ipl"),
+    model: str = typer.Option(
+        "gan", help="gan (hand-written), marginals, or ctgan (pip install ctgan)"
+    ),
+    epochs: int = typer.Option(300, help="Training epochs for gan / ctgan"),
+    rows: int = typer.Option(0, help="Rows to sample (default: same as the real train set)"),
+    device: str = typer.Option("auto", help="auto, cuda, mps or cpu"),
+    batch_size: int = typer.Option(500, help="Must be a multiple of pac (10)"),
+):
+    """Fit a generator on the real train split and save a synthetic table."""
+    from cricket_ai.synthetic.table import DISCRETE, split_by_match, validity
+
+    train, _ = split_by_match(_overs(dataset))
+    n = rows or len(train)
+    model_dir = config.MODELS_DIR / dataset / f"synth_{model}"
+    if model == "gan":
+        from cricket_ai.synthetic.gan import GANConfig, TabularGAN
+
+        gen = TabularGAN(GANConfig(epochs=epochs, device=device, batch_size=batch_size))
+        gen.fit(train, DISCRETE)
+        gen.save(model_dir)
+        typer.echo(f"Trained on {gen.history.device} in {gen.history.seconds}s -> {model_dir}")
+    elif model == "marginals":
+        from cricket_ai.synthetic.baselines import IndependentMarginals
+
+        gen = IndependentMarginals().fit(train, DISCRETE)
+    elif model == "ctgan":
+        from cricket_ai.synthetic.baselines import CTGANBaseline
+
+        gen = CTGANBaseline(epochs=epochs, device=device).fit(train, DISCRETE)
+    else:
+        typer.echo(f"Unknown model {model!r}", err=True)
+        raise typer.Exit(code=1)
+
+    synth = gen.sample(n)
+    out = config.processed_dir(dataset) / "synthetic" / f"{model}.parquet"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    synth.to_parquet(out, index=False)
+    typer.echo(f"Sampled {len(synth)} rows -> {out}")
+    typer.echo(
+        f"Validity (share of rows obeying every cricket rule): {validity(synth)['all_rules']}"
+    )
+
+
+@synth_app.command("evaluate")
+def synth_evaluate(dataset: str = typer.Argument("ipl")):
+    """Compare every synthetic table with the real holdout; write reports/<dataset>/synthetic/."""
+    import pandas as pd
+
+    from cricket_ai.synthetic.evaluate import evaluate_all
+    from cricket_ai.synthetic.table import split_by_match
+
+    train, holdout = split_by_match(_overs(dataset))
+    synth_dir = config.processed_dir(dataset) / "synthetic"
+    synthetic = {p.stem: pd.read_parquet(p) for p in sorted(synth_dir.glob("*.parquet"))}
+    if not synthetic:
+        typer.echo(
+            f"No synthetic tables in {synth_dir}. Run `cricket-ai synth train` first.", err=True
+        )
+        raise typer.Exit(code=1)
+    out = config.REPORTS_DIR / dataset / "synthetic"
+    result = evaluate_all(train, holdout, synthetic, out)
+    cols = [
+        "mean_tvd",
+        "corr_diff",
+        "validity",
+        "runs_mae",
+        "wicket_auc",
+        "dcr_ratio",
+        "membership_auc",
+    ]
+    table = pd.DataFrame(result["summary"]).set_index("model")
+    typer.echo(table.reindex(columns=cols).to_markdown())
+    typer.echo(f"Report: {out / 'report.md'}")
 
 
 @app.command("version")
