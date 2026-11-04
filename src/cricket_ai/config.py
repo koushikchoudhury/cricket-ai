@@ -9,6 +9,7 @@ DATA_DIR = Path(os.environ.get("CRICKET_AI_DATA_DIR", "data")).resolve()
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 REPORTS_DIR = Path(os.environ.get("CRICKET_AI_REPORTS_DIR", "reports")).resolve()
+MODELS_DIR = Path(os.environ.get("CRICKET_AI_MODELS_DIR", "models")).resolve()
 
 
 def raw_dir(dataset: str) -> Path:

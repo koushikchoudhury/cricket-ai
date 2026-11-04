@@ -12,7 +12,7 @@ building blocks around them.
 
 | # | Module | What it shows | Status |
 |---|--------|---------------|--------|
-| 1 | Data pipeline, analytics, win probability | Data engineering, validation, tabular modelling, calibration | 🟡 Pipeline done, model next |
+| 1 | Data pipeline, analytics, win probability | Data engineering, validation, tabular modelling, calibration | 🟡 Pipeline and model code done |
 | 2 | Synthetic data (GAN, CTGAN) | Generative modelling, fidelity / utility / privacy evaluation | ⚪ Planned |
 | 3 | Video and image analysis | YOLO detection, ball tracking, pose-based shot classification | ⚪ Planned |
 | 4 | Multimodal RAG | Retrieval over scorecards, commentary, images and clips, with evals | ⚪ Planned |
@@ -31,6 +31,10 @@ cricket-ai data download ipl      # Cricsheet IPL archive -> data/raw/ipl
 cricket-ai data build ipl         # validated Parquet tables -> data/processed/ipl
 cricket-ai data features ipl      # win-probability chase states
 cricket-ai data report ipl        # batting / bowling / phase / team summaries -> reports/ipl
+
+pip install -e ".[winprob]"       # PyTorch, scikit-learn, matplotlib
+cricket-ai winprob train ipl      # baselines + MLP, evaluated on the two latest seasons
+cricket-ai winprob curve <match_id>  # win-probability curve and key moments for one chase
 ```
 
 Or with Docker:
