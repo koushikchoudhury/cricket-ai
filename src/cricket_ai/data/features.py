@@ -21,8 +21,44 @@ CHASE_FEATURES = [
     "required_run_rate",
     "runs_last_12_balls",
     "wickets_last_12_balls",
+    "par_score",
+    "target_vs_par",
 ]
 RRR_CAP = 36.0  # required run rate is unbounded near the end; cap it
+PAR_WINDOW = 60  # roughly one IPL season of previous matches
+PAR_MIN_INNINGS_BALLS = 60  # ignore first innings shorter than 10 overs (rain, abandonments)
+DEFAULT_PAR_RPO = 8.0
+
+
+def first_innings_par(
+    matches: pd.DataFrame, deliveries: pd.DataFrame, window: int = PAR_WINDOW
+) -> pd.Series:
+    """Par first-innings run rate for each match, from *earlier* matches only.
+
+    The scoring environment drifts (Impact Player rule, bigger bats, flatter pitches),
+    so a target of 200 means different things in different eras. For each match this is
+    the mean first-innings run rate of the previous ``window`` matches in the same
+    competition, excluding the match itself, so it never leaks the result.
+    """
+    inn1 = deliveries[(deliveries.innings == 1) & ~deliveries.is_super_over]
+    agg = inn1.groupby("match_id").agg(runs=("runs_total", "sum"), balls=("is_legal", "sum"))
+    agg = agg[agg.balls >= PAR_MIN_INNINGS_BALLS]
+    rpo = (agg.runs * 6.0 / agg.balls).rename("rpo")
+
+    m = matches[["match_id", "start_date", "event_name"]].copy()
+    m["event_name"] = m.event_name.fillna("unknown")
+    m = m.merge(rpo, left_on="match_id", right_index=True, how="left")
+    m = m.sort_values(["start_date", "match_id"], kind="stable")
+
+    def prior_mean(s: pd.Series, w: int | None, min_periods: int) -> pd.Series:
+        roll = s.rolling(w, min_periods=min_periods) if w else s.expanding(min_periods)
+        return roll.mean().shift(1)
+
+    by_event = m.groupby("event_name", sort=False).rpo
+    par = by_event.transform(lambda s: prior_mean(s, window, 10))
+    par = par.fillna(prior_mean(m.rpo, None, 10))  # new competition: all earlier matches
+    par = par.fillna(DEFAULT_PAR_RPO)
+    return pd.Series(par.to_numpy(), index=m.match_id.to_numpy(), name="par_rpo")
 
 
 def chase_states(
@@ -41,6 +77,8 @@ def chase_states(
     m["max_balls"] = [
         overs_to_balls(o, int(b)) for o, b in zip(m.target_overs, m.balls_per_over, strict=True)
     ]
+    par_rpo = first_innings_par(matches, deliveries)
+    m["par_score"] = m.match_id.map(par_rpo) * m.max_balls / 6.0
     cols = [
         "match_id",
         "match_type",
@@ -50,6 +88,7 @@ def chase_states(
         "winner",
         "target_runs",
         "max_balls",
+        "par_score",
     ]
 
     d = deliveries[(deliveries.innings == 2) & ~deliveries.is_super_over]
@@ -72,8 +111,11 @@ def chase_states(
             "wickets_in_hand": (10 - d.team_wickets).astype(int).values,
             "balls_bowled": d.legal_balls.astype(int).values,
             "runs_scored": d.team_runs.astype(int).values,
+            "par_score": d.par_score.astype(float).values,
         }
     )
+    # How hard the target is for this era: positive means above par.
+    out["target_vs_par"] = out.target - out.par_score
     out["current_run_rate"] = np.where(
         out.balls_bowled > 0, out.runs_scored * 6.0 / out.balls_bowled.clip(lower=1), 0.0
     )

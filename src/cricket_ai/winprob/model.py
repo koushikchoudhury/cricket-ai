@@ -1,7 +1,7 @@
 """Hand-written PyTorch win-probability model.
 
 Everything here is plain PyTorch: the network, the standardisation, the mini-batch
-training loop with early stopping, and temperature scaling for calibration. No
+training loop with early stopping, and affine (Platt) calibration of the logits. No
 training frameworks (Lightning, HF Trainer) or sklearn estimators are involved.
 """
 
@@ -18,7 +18,7 @@ import pandas as pd
 import torch
 from torch import nn
 
-from cricket_ai.winprob.data import FEATURES, LABEL, feature_matrix
+from cricket_ai.winprob.data import FEATURES, LABEL, feature_matrix, recency_weights
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ class TrainConfig:
     patience: int = 6
     seed: int = 42
     device: str = "auto"
+    # Weight halves every N seasons back; None/0 = equal weights.
+    recency_half_life: float | None = 4.0
 
 
 @dataclass
@@ -41,7 +43,8 @@ class TrainHistory:
     train_loss: list[float] = field(default_factory=list)
     val_loss: list[float] = field(default_factory=list)
     best_epoch: int = 0
-    temperature: float = 1.0
+    calib_scale: float = 1.0
+    calib_bias: float = 0.0
 
 
 def resolve_device(device: str = "auto") -> torch.device:
@@ -84,8 +87,11 @@ class WinProbMLP(nn.Module):
             d = h
         layers.append(nn.Linear(d, 1))
         self.net = nn.Sequential(*layers)
-        # Temperature for post-hoc calibration; 1.0 until calibrate() is called.
-        self.register_buffer("temperature", torch.ones(()))
+        # Post-hoc calibration p = sigmoid(a * logit + b); identity until calibrate() runs.
+        # Temperature scaling (b = 0) can only sharpen or soften; the bias can also shift,
+        # which is needed when the test era is systematically easier or harder to chase in.
+        self.register_buffer("calib_scale", torch.ones(()))
+        self.register_buffer("calib_bias", torch.zeros(()))
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -98,7 +104,7 @@ class WinProbMLP(nn.Module):
         return self.net(self.scaler(x)).squeeze(-1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.logits(x) / self.temperature
+        return self.logits(x) * self.calib_scale + self.calib_bias
 
 
 def _to_tensors(df: pd.DataFrame, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
@@ -126,13 +132,14 @@ def train_mlp(
 
     x_tr, y_tr = _to_tensors(train, device)
     x_va, y_va = _to_tensors(val, device)
+    w_tr = torch.from_numpy(recency_weights(train, cfg.recency_half_life)).to(device)
 
     model = WinProbMLP(len(FEATURES), cfg.hidden, cfg.dropout).to(device)
     model.scaler.fit(x_tr)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     steps_per_epoch = math.ceil(len(x_tr) / cfg.batch_size)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=cfg.max_epochs * steps_per_epoch)
-    loss_fn = nn.BCEWithLogitsLoss()
+    loss_fn = nn.BCEWithLogitsLoss(reduction="none")
     gen = torch.Generator(device="cpu").manual_seed(cfg.seed)
 
     hist = TrainHistory()
@@ -144,7 +151,8 @@ def train_mlp(
         for i in range(0, len(x_tr), cfg.batch_size):
             idx = perm[i : i + cfg.batch_size]
             opt.zero_grad(set_to_none=True)
-            loss = loss_fn(model(x_tr[idx]), y_tr[idx])
+            w = w_tr[idx]
+            loss = (loss_fn(model(x_tr[idx]), y_tr[idx]) * w).sum() / w.sum()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -163,29 +171,32 @@ def train_mlp(
                 break
 
     model.load_state_dict(best_state)
-    hist.temperature = calibrate(model, x_va, y_va)
+    hist.calib_scale, hist.calib_bias = calibrate(model, x_va, y_va)
     return model.eval(), hist
 
 
-def calibrate(model: WinProbMLP, x_val: torch.Tensor, y_val: torch.Tensor) -> float:
-    """Temperature scaling: fit a single scalar T on validation logits by minimising NLL."""
+def calibrate(model: WinProbMLP, x_val: torch.Tensor, y_val: torch.Tensor) -> tuple[float, float]:
+    """Platt scaling: fit p = sigmoid(a * logit + b) on validation data by minimising NLL."""
     model.eval()
     with torch.no_grad():
         logits = model.logits(x_val)
-    log_t = torch.zeros((), device=logits.device, requires_grad=True)
-    opt = torch.optim.LBFGS([log_t], lr=0.1, max_iter=100)
+    log_a = torch.zeros((), device=logits.device, requires_grad=True)
+    b = torch.zeros((), device=logits.device, requires_grad=True)
+    opt = torch.optim.LBFGS([log_a, b], lr=0.1, max_iter=200)
     loss_fn = nn.BCEWithLogitsLoss()
 
     def closure():
         opt.zero_grad()
-        loss = loss_fn(logits / log_t.exp(), y_val)
+        loss = loss_fn(logits * log_a.exp() + b, y_val)
         loss.backward()
         return loss
 
     opt.step(closure)
-    t = float(log_t.exp().clamp(0.25, 4.0))
-    model.temperature.fill_(t)
-    return t
+    a_val = float(log_a.exp().clamp(0.25, 4.0))
+    b_val = float(b.clamp(-3.0, 3.0))
+    model.calib_scale.fill_(a_val)
+    model.calib_bias.fill_(b_val)
+    return a_val, b_val
 
 
 @torch.no_grad()
