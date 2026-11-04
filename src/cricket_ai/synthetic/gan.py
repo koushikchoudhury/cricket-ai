@@ -48,6 +48,7 @@ class GANConfig:
     batch_size: int = 500
     pac: int = 10
     critic_steps: int = 1
+    critic_dropout: float = 0.5
     epochs: int = 300
     gp_lambda: float = 10.0
     gumbel_tau: float = 0.2
@@ -92,14 +93,14 @@ class Generator(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, d_in: int, dims: tuple[int, ...], pac: int):
+    def __init__(self, d_in: int, dims: tuple[int, ...], pac: int, dropout: float = 0.5):
         super().__init__()
         self.pac = pac
         self.pac_dim = d_in * pac
         layers: list[nn.Module] = []
         d = self.pac_dim
         for h in dims:
-            layers += [nn.Linear(d, h), nn.LeakyReLU(0.2), nn.Dropout(0.5)]
+            layers += [nn.Linear(d, h), nn.LeakyReLU(0.2), nn.Dropout(dropout)]
             d = h
         layers.append(nn.Linear(d, 1))
         self.net = nn.Sequential(*layers)
@@ -184,7 +185,7 @@ class TabularGAN:
 
         self.generator = Generator(cfg.embedding_dim + d_cond, cfg.generator_dims, d_data)
         self.generator.to(device)
-        critic = Critic(d_data + d_cond, cfg.critic_dims, cfg.pac).to(device)
+        critic = Critic(d_data + d_cond, cfg.critic_dims, cfg.pac, cfg.critic_dropout).to(device)
         opt_g = torch.optim.Adam(
             self.generator.parameters(),
             lr=cfg.lr_generator,
