@@ -32,6 +32,31 @@ MONTHS = "january|february|march|april|may|june|july|august|september|october|no
 DATE = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)? ({MONTHS}),? (\d{{4}})\b", re.IGNORECASE)
 
 
+INTENTS = [
+    (
+        "match",
+        re.compile(
+            r"\b(won|win|wins|winner|beat|beaten|lost|result|final|qualifier|eliminator|"
+            r"player of the match|man of the match|toss|tied|super over)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "innings_phase",
+        re.compile(r"\b(powerplay|power play|middle overs|death overs?)\b", re.IGNORECASE),
+    ),
+    (
+        "player_season",
+        re.compile(r"\b(season|strike rate|economy|average|career)\b", re.IGNORECASE),
+    ),
+]
+
+
+def intent_kinds(query: str) -> list[str]:
+    """Document kinds the question is probably about ('who won' -> match reports)."""
+    return [kind for kind, pattern in INTENTS if pattern.search(query)]
+
+
 def with_date_tokens(text: str) -> str:
     """Append one token per date ('2 April 2020' -> 'd_2_april_2020').
 
@@ -192,7 +217,16 @@ class HybridRetriever:
         if method != "hybrid":
             raise ValueError(f"Unknown method {method!r}")
         lexical = self.bm25.scores(with_date_tokens(query))
-        fused = rrf([self._top(lexical, candidates, mask), self._top(dense, candidates, mask)])
+        rankings = [self._top(lexical, candidates, mask), self._top(dense, candidates, mask)]
+        # Query intent as a third, soft vote: documents of the kind the question is about,
+        # in keyword order. A wrong guess only adds a vote; it never hides a document.
+        preferred = [kd for kd in intent_kinds(query) if not kinds or kd in kinds]
+        if preferred:
+            kind_mask = np.array([d.kind in preferred for d in self.docs])
+            if mask is not None:
+                kind_mask &= mask
+            rankings.append(self._top(lexical, candidates, kind_mask))
+        fused = rrf(rankings)
         ranked = sorted(fused.items(), key=lambda kv: -kv[1])[:k]
         return [Hit(self.docs[i], s, r, method) for r, (i, s) in enumerate(ranked)]
 

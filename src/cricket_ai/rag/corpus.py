@@ -153,7 +153,13 @@ def match_documents(
             ["wickets", "runs"], ascending=[False, True]
         )
         event = _s(m.event_name) or "Match"
-        number = f", match {m.match_number}" if pd.notna(m.match_number) else ""
+        stage = _s(getattr(m, "event_stage", None))
+        if stage:
+            number = f", {stage}"
+        elif pd.notna(m.match_number):
+            number = f", match {m.match_number}"
+        else:
+            number = ""
         city = _s(m.city)
         venue = _s(m.venue) + (f", {city}" if city and city not in _s(m.venue) else "")
         pom = _s(m.player_of_match)
@@ -177,7 +183,8 @@ def match_documents(
             Document(
                 doc_id=f"match:{m.match_id}",
                 kind="match",
-                title=f"{m.team1} v {m.team2}, {fmt_date(m.start_date)}",
+                title=f"{m.team1} v {m.team2}, {fmt_date(m.start_date)}"
+                + (f" ({stage})" if stage else ""),
                 text=" ".join(p for p in parts if p),
                 metadata={
                     "match_id": m.match_id,
@@ -185,6 +192,7 @@ def match_documents(
                     "date": str(pd.Timestamp(m.start_date).date()),
                     "teams": [m.team1, m.team2],
                     "venue": _s(m.venue),
+                    "stage": stage or None,
                     "event": event,
                     "winner": _s(m.winner) or None,
                     "player_of_match": pom or None,

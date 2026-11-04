@@ -228,3 +228,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: Module 2 run on IPL: hand-written GAN beats the CTGAN library on 4 of 5 quality metrics.
 - 2026-11-04: Module 4 built: corpus, hybrid search, SQL route, LLM switch, image search, evaluation.
 - 2026-11-04: Module 5 built: LangGraph agent with five tools, approval, tracing, evaluation and UI.
+- 2026-11-04: First real RAG answer exposed a gap: playoff stage ("Final") was not parsed, so the final was unretrievable. Added the stage and a query-intent ranking vote.

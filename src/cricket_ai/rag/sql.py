@@ -23,6 +23,7 @@ SCHEMA = """\
 Tables (DuckDB):
 
 matches(match_id, season TEXT e.g. '2016' or '2007/08', start_date DATE, event_name, match_number,
+        event_stage ('Final', 'Qualifier 1', 'Qualifier 2', 'Eliminator', or NULL for league games),
         city, venue, team1, team2, toss_winner, toss_decision ('bat'|'field'), winner,
         result ('win'|'tie'|'no result'|...), win_by_runs, win_by_wickets, method (e.g. 'D/L'),
         target_runs, player_of_match)

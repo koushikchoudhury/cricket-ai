@@ -94,6 +94,8 @@ def parse_match_dict(data: dict[str, Any], match_id: str) -> ParsedMatch:
         "team_type": info.get("team_type"),
         "event_name": event.get("name"),
         "match_number": event.get("match_number"),
+        # Playoff stage, e.g. "Final", "Qualifier 2", "Eliminator"; None for league games.
+        "event_stage": event.get("stage"),
         "season": str(info["season"]) if "season" in info else None,
         "start_date": dates[0] if dates else None,
         "city": info.get("city"),

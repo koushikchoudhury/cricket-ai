@@ -71,6 +71,30 @@ def test_match_report_facts(docs):
     assert "B1 1/15 (1.0 overs)" in text  # leg-bye not charged, run out not credited
 
 
+def test_playoff_stage_is_searchable(built):
+    from cricket_ai.data.parse import parse_match_dict
+    from cricket_ai.rag.corpus import match_documents
+
+    fixture = __import__("pathlib").Path(__file__).parent / "fixtures" / "tiny_match.json"
+    data = json.loads(fixture.read_text())
+    data["info"]["event"] = {"name": "Fixture League", "stage": "Final"}
+    parsed = parse_match_dict(data, "final_match")
+    assert parsed.match["event_stage"] == "Final"
+
+    import pandas as pd
+
+    m = pd.DataFrame([parsed.match])
+    m["start_date"] = pd.to_datetime(m.start_date)
+    d = pd.DataFrame(parsed.deliveries)
+    final = match_documents(m, d)[0]
+    assert "Fixture League 2024, Final: Team A v Team B" in final.text
+    assert final.title.endswith("(Final)") and final.metadata["stage"] == "Final"
+
+    docs = build_corpus(built.matches, built.deliveries) + [final]
+    hits = HybridRetriever(docs, HashingEmbedder()).search("Who won the final in 2024?", k=1)
+    assert hits[0].doc.doc_id == "match:final_match"
+
+
 def test_phase_and_player_documents(docs):
     phase = doc(docs, "phase:tiny_match:1:powerplay")
     assert "24 runs for 2 wickets off 12 balls" in phase.text
@@ -101,6 +125,15 @@ def test_exact_dates_count_in_keyword_search():
     texts = ["Kolkata v Mumbai on 27 April 2020, 117/2", "Kolkata v Mumbai on 2 April 2020"]
     bm = BM25().fit([with_date_tokens(t) for t in texts])
     assert bm.scores(with_date_tokens("match on 2 April 2020")).argmax() == 1
+
+
+def test_query_intent():
+    from cricket_ai.rag.retrieval import intent_kinds
+
+    assert intent_kinds("Who won the final in 2016?") == ["match"]
+    assert intent_kinds("Runs in the death overs") == ["innings_phase"]
+    assert intent_kinds("Kohli's strike rate in the 2016 season") == ["player_season"]
+    assert intent_kinds("Tell me about Eden Gardens") == []
 
 
 def test_rrf_rewards_agreement():
