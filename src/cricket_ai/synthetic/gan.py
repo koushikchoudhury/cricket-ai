@@ -7,6 +7,7 @@ Architecture follows the ideas behind CTGAN (Xu et al., 2019), written from scra
   tanh for mode offsets, Gumbel-softmax for one-hot blocks.
 * **Critic**: PacGAN (Lin et al., 2018). It scores ``pac`` rows at once, so a generator
   that keeps emitting the same row is easy to spot; this counters mode collapse.
+  Unlike CTGAN, dropout in the critic is off by default (it slowed learning here).
 * **Objective**: WGAN with gradient penalty (Gulrajani et al., 2017), plus a
   cross-entropy term that makes the generator honour the conditional vector.
 * **Training-by-sampling**: see ``sampler.py``.
@@ -48,7 +49,9 @@ class GANConfig:
     batch_size: int = 500
     pac: int = 10
     critic_steps: int = 1
-    critic_dropout: float = 0.5
+    # CTGAN uses 0.5. On this data no dropout learned the joint structure ~3x faster
+    # for the same training time (see TRACKER, module 2 diagnostics).
+    critic_dropout: float = 0.0
     epochs: int = 300
     gp_lambda: float = 10.0
     gumbel_tau: float = 0.2

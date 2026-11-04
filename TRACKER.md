@@ -98,10 +98,31 @@ synthetic and real data.
 - [x] Utility: TSTR vs TRTR on runs-in-over (MAE) and wicket-in-over (AUC)
 - [x] Privacy: distance to closest record vs holdout, membership-inference AUC
 - [x] CLI: `cricket-ai synth table / train / evaluate`
+- [x] Diagnostics: hand-written GAN matches the CTGAN library; critic dropout off learns ~3x faster
 - [ ] Train the GAN and CTGAN on IPL (GPU) and record the results
 - [ ] Optional: innings-level sequence generator so synthetic chases can feed the win-probability model
 
 **Metrics:** KS / TV distances, correlation difference, validity rate, TSTR vs TRTR gap, DCR ratio, membership AUC.
+
+### Diagnostics (2026-11-04, CPU in CI, 4,615 simulated overs, batch 100)
+
+The yardstick is the correlation between over number and runs at the start of the over
+(0.95 in real data), plus the mean correlation-matrix error (independent marginals: 0.135).
+
+| setting | time | corr error | r(over, runs at start) |
+|---|---|---|---|
+| hand-written, CTGAN defaults, 100 epochs | 35s | 0.113 | 0.07 |
+| CTGAN library, 100 epochs | 45s | 0.116 | 0.03 |
+| hand-written, 300 epochs | 104s | 0.076 | 0.58 |
+| **hand-written, critic dropout 0, 100 epochs** | 35s | 0.085 | 0.42 |
+| critic steps 5 + dropout 0, 60 epochs | 57s | 0.075 | 0.49 |
+| learning rate 1e-3, 100 epochs | 36s | 0.134 | 0.00 |
+
+Findings:
+- The hand-written GAN performs on par with the reference CTGAN implementation (no bug).
+- Both learn strong discrete-to-continuous links slowly; quality keeps improving with steps.
+- Removing critic dropout (CTGAN default 0.5) gave the best quality per unit of time, so it is
+  the new default. A higher learning rate hurt. A full IPL run (~20k steps) exceeds the best run here.
 
 ## 3. Video and image analysis
 

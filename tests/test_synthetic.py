@@ -158,12 +158,14 @@ def test_gan_trains_samples_and_reloads(split, tmp_path):
 
 
 def test_gan_learns_structure(split):
-    """A short run should already beat independent columns on correlations."""
+    """~3,500 steps should beat independent columns and pick up over <-> score."""
     pytest.importorskip("torch")
     from cricket_ai.synthetic.gan import GANConfig, TabularGAN
 
     train, holdout = split
-    gan = TabularGAN(GANConfig(epochs=40, batch_size=200, device="cpu")).fit(train, DISCRETE)
-    synth = gan.sample(len(train))
+    epochs = max(1, 3500 // (len(train) // 100))
+    gan = TabularGAN(GANConfig(epochs=epochs, batch_size=100, device="cpu", log_every=10**6))
+    synth = gan.fit(train, DISCRETE).sample(len(train))
     marg = IndependentMarginals().fit(train).sample(len(train))
     assert correlation_difference(holdout, synth) < correlation_difference(holdout, marg)
+    assert np.corrcoef(synth.over, synth.runs_at_start)[0, 1] > 0.2
