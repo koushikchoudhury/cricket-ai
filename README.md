@@ -13,7 +13,7 @@ building blocks around them.
 | # | Module | What it shows | Status |
 |---|--------|---------------|--------|
 | 1 | Data pipeline, analytics, win probability | Data engineering, validation, tabular modelling, calibration | 🟡 Pipeline and model code done |
-| 2 | Synthetic data (GAN, CTGAN) | Generative modelling, fidelity / utility / privacy evaluation | ⚪ Planned |
+| 2 | Synthetic data (GAN, CTGAN) | Generative modelling, fidelity / utility / privacy evaluation | 🟡 Code done, IPL run next |
 | 3 | Video and image analysis | YOLO detection, ball tracking, pose-based shot classification | ⚪ Planned |
 | 4 | Multimodal RAG | Retrieval over scorecards, commentary, images and clips, with evals | ⚪ Planned |
 | 5 | LangGraph agent | Tool orchestration across modules 1–4 | ⚪ Planned |
@@ -77,6 +77,29 @@ momentum) labelled with whether the chasing side won. Ties, no-results and D/L-a
 are excluded by default, and `split_by_date` gives a time-based train/test split so no match
 leaks across it.
 
+## Module 2: synthetic data
+
+A hand-written conditional GAN learns to generate realistic overs of T20 cricket: the
+state at the start of the over and what happened in it.
+
+```bash
+pip install -e ".[synthetic]"
+cricket-ai synth table ipl                    # real over-level table + validity check
+cricket-ai synth train ipl --model marginals  # floor baseline (seconds)
+cricket-ai synth train ipl --model gan        # hand-written GAN (uses the GPU if present)
+pip install ctgan && cricket-ai synth train ipl --model ctgan   # optional library baseline
+cricket-ai synth evaluate ipl                 # report in reports/ipl/synthetic/
+```
+
+The evaluation answers four questions about each synthetic table:
+
+| Question | Metric |
+|---|---|
+| Do the columns look real? | Total variation / KS distance per column, correlation difference |
+| Is it possible cricket? | Share of rows passing 8 rules (e.g. wickets ≤ 10, runs ≥ boundary runs + extras) |
+| Is it useful? | Train on synthetic, test on real: runs-in-over MAE and wicket AUC vs training on real |
+| Does it leak the training data? | Distance to closest record vs real holdout, membership-inference AUC |
+
 ## Repository layout
 
 ```
@@ -84,7 +107,7 @@ src/cricket_ai/
   data/        download, parse, validate, build, features
   analytics/   summary tables
   winprob/     module 1 model (next)
-  synthetic/   module 2
+  synthetic/   module 2: table, encoder, sampler, GAN, baselines, evaluation
   vision/      module 3
   rag/         module 4
   agent/       module 5
