@@ -16,7 +16,7 @@ building blocks around them.
 | 2 | Synthetic data (GAN, CTGAN) | Generative modelling, fidelity / utility / privacy evaluation | ✅ GAN beats CTGAN library on 4 of 5 metrics |
 | 3 | Video and image analysis | YOLO detection, ball tracking, pose-based shot classification | ⚪ Planned |
 | 4 | Multimodal RAG | Hybrid retrieval, SQL for numbers, citations, image search, evals | 🟡 Code done, IPL run next |
-| 5 | LangGraph agent | Tool orchestration across modules 1–4 | ⚪ Planned |
+| 5 | LangGraph agent | Tool orchestration across modules 1, 2 and 4, with approval and tracing | 🟡 Code done, LLM run next |
 | 6 | Docker, Kubernetes, AWS | kind locally, short EKS deployment, S3/ECR | 🟡 Data image done |
 
 Full task breakdown: [TRACKER.md](TRACKER.md).
@@ -118,6 +118,36 @@ cricket-ai rag evaluate ipl --llm ollama        # retrieval + answer accuracy
   known source document: recall@k and MRR for retrieval, accuracy for answers.
 - **LLM:** `--llm none|ollama|anthropic|openai`. With `none`, you get the retrieved sources.
 
+## Module 5: the agent
+
+A LangGraph agent decides which module to use for each question:
+
+```mermaid
+graph TD
+  START([start]) --> agent
+  agent -.tool calls.-> tools
+  tools --> agent
+  agent -.answer.-> END([end])
+  agent -.step limit.-> limit --> END
+```
+
+| Tool | Module | Used for |
+|---|---|---|
+| `search_cricket` | 4 | what happened in a match, player of the match |
+| `player_stats` | 1/4 | a player's batting and bowling, by season |
+| `run_sql` | 4 | rankings and records (read-only SQL) |
+| `win_probability` | 1 | the chasing side's chance from a match situation |
+| `generate_synthetic_overs` | 2 | GAN-generated overs (asks for approval first) |
+
+```bash
+pip install -e ".[agent,ollama]"
+cricket-ai agent ask "Who scored the most runs in the 2016 season?" --llm ollama
+cricket-ai agent ask "A team chasing 180 is 100/2 after 12 overs. Chance of winning?" --llm ollama
+cricket-ai agent chat --llm ollama               # terminal chat
+cricket-ai agent evaluate ipl --llm ollama       # tool-choice and answer accuracy
+pip install gradio && cricket-ai agent ui --llm ollama   # browser chat
+```
+
 ## Repository layout
 
 ```
@@ -128,7 +158,7 @@ src/cricket_ai/
   synthetic/   module 2: table, encoder, sampler, GAN, baselines, evaluation
   vision/      module 3
   rag/         module 4: corpus, retrieval, SQL, pipeline, images, evaluation
-  agent/       module 5
+  agent/       module 5: tools, LangGraph graph, evaluation, UI
   cli.py       `cricket-ai` command
 docker/        one Dockerfile per module
 infra/k8s/     kind and EKS manifests (module 6)

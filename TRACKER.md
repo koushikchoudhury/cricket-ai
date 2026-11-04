@@ -8,7 +8,7 @@ Status: ✅ done · 🟡 in progress · ⚪ not started. Update this file in the
 | 2. Synthetic data | ✅ | Optional: improve wicket utility; innings-level sequence generator |
 | 3. Video and image analysis | ⚪ | Source and label a small broadcast-frame dataset |
 | 4. Multimodal RAG | 🟡 | Index IPL with a real embedding model; run the eval with an LLM |
-| 5. LangGraph agent | ⚪ | Wrap modules 1–4 as tools |
+| 5. LangGraph agent | 🟡 | Run `agent evaluate` with Ollama or an API and record the results |
 | 6. Docker, Kubernetes, AWS | 🟡 | kind cluster running the data job |
 
 ---
@@ -188,12 +188,18 @@ and clips, with an evaluation set and scores.
 **Deliverables:** an agent that answers cricket questions by calling the other modules, with
 traces and an evaluation.
 
-- [ ] Tools: SQL analytics, win-probability lookup, synthetic-data generator, vision on a clip, RAG search
-- [ ] LangGraph state graph with planner, tool nodes and an answer node; retries and guardrails
-- [ ] Human-in-the-loop step for expensive tools (vision on long clips)
-- [ ] Tracing (LangSmith or OpenTelemetry)
-- [ ] Task-success eval set and report
-- [ ] Simple UI (Streamlit or Gradio)
+- [x] Tools: search_cricket (module 4), player_stats and run_sql (modules 1/4), win_probability (module 1),
+      generate_synthetic_overs (module 2); offered only when their index or model exists
+- [x] LangGraph state graph: agent -> tools -> agent, with a step limit node
+- [x] Guardrails: read-only SQL, tool errors returned to the model, unknown tools handled, step limit
+- [x] Human-in-the-loop approval for expensive tools (yes/no prompt; `--yes` to skip)
+- [x] Tracing: every tool call timed and logged to `reports/<dataset>/agent/traces.jsonl`
+      (LangSmith also works by setting `LANGSMITH_TRACING=true` and an API key)
+- [x] Task eval generated from the data: tool-choice accuracy, answer accuracy, steps, latency
+- [x] CLI (`agent ask / chat / evaluate / graph`) and a Gradio chat UI (`agent ui`)
+- [x] Tests with a scripted fake model: tool use, error recovery, step limit, approval, scoring
+- [ ] Run the evaluation with a real LLM (Ollama qwen2.5:3b and/or an API) and record results
+- [ ] Vision tool once module 3 exists
 
 ## 6. Docker, Kubernetes, AWS
 
@@ -221,3 +227,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: Module 2 built: over-level table, hand-written GAN, baselines, full evaluation.
 - 2026-11-04: Module 2 run on IPL: hand-written GAN beats the CTGAN library on 4 of 5 quality metrics.
 - 2026-11-04: Module 4 built: corpus, hybrid search, SQL route, LLM switch, image search, evaluation.
+- 2026-11-04: Module 5 built: LangGraph agent with five tools, approval, tracing, evaluation and UI.
