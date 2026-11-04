@@ -206,7 +206,9 @@ traces and an evaluation.
 - [x] Run 2 with the fixes (below): 15/17 scored correct, but 2 chase answers were wrong yet passed
 - [x] Fixes: win_probability takes overs; chase tasks scored against ground truth and expected arguments;
       tool arguments in results.csv; surname fallback for names; leaderboard leads with the leader
-- [ ] Run 3 and record results
+- [x] Variance check: three identical runs (same model, code, tasks) scored 88%, 82% and 100%
+      (season_runs 0.75 / 0.50 / 1.00). Added `--repeats N`: mean, range across runs, per-task consistency
+- [ ] Run 3 with `--repeats 5` and record mean and range
 - [ ] Vision tool once module 3 exists
 
 ### Run 1 (2026-11-04, Ollama qwen2.5:3b on GTX 1650)

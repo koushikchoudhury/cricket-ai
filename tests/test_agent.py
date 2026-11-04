@@ -279,3 +279,20 @@ def test_leaderboard_leads_with_the_answer(ctx):
     tool = {t.name: t for t in build_tools(ctx)}["leaderboard"]
     out = tool.invoke({"stat": "runs", "season": "2024"})
     assert out.splitlines()[0] == "Leader: B1, 16 runs scored in the 2024 season."
+
+
+def test_repeats_report_mean_range_and_flaky_tasks(ctx, tmp_path):
+    task = [t for t in generate_tasks(ctx, per_type=1) if t["type"] == "season_runs"]
+    runs_expected = task[0]["expected"]
+    call = [("player_stats", {"player": task[0]["question"].split(" did ")[1].split(" score")[0]})]
+    # same task twice: right in run 1, wrong in run 2 (as local models do)
+    llm = scripted(call, f"{runs_expected} runs.", call, "No idea.")
+    results = evaluate_agent(CricketAgent(llm, ctx), task, repeats=2)
+    assert list(results.run) == [1, 2] and list(results.correct) == [True, False]
+    summary = write_report(results, tmp_path, "scripted")
+    assert summary["runs"] == 2 and summary["tasks"] == 1
+    assert summary["answer_accuracy"] == 0.5
+    assert (summary["answer_accuracy_min"], summary["answer_accuracy_max"]) == (0.0, 1.0)
+    assert summary["consistency"] == 0.0
+    report = (tmp_path / "report.md").read_text()
+    assert "range 0%-100% over 2 runs" in report and "changed verdict" in report
