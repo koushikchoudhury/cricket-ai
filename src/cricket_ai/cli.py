@@ -23,6 +23,16 @@ agent_app = typer.Typer(help="Module 5: LangGraph agent.", no_args_is_help=True)
 app.add_typer(agent_app, name="agent")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+# Library request logs (model downloads, Ollama calls) are noise in normal use.
+for _noisy in (
+    "httpx",
+    "httpx2",
+    "httpcore",
+    "sentence_transformers",
+    "urllib3",
+    "huggingface_hub",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 @data_app.command("download")
