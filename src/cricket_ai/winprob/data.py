@@ -16,6 +16,8 @@ BASE_FEATURES = [
     "required_run_rate",
     "runs_last_12_balls",
     "wickets_last_12_balls",
+    "par_score",
+    "target_vs_par",
 ]
 DERIVED_FEATURES = ["rate_gap", "runs_per_wicket_needed", "frac_balls_left"]
 FEATURES = BASE_FEATURES + DERIVED_FEATURES
@@ -31,6 +33,8 @@ MONOTONIC = {
     "required_run_rate": -1,
     "runs_last_12_balls": 0,
     "wickets_last_12_balls": 0,
+    "par_score": 0,
+    "target_vs_par": -1,
     "rate_gap": -1,
     "runs_per_wicket_needed": -1,
     "frac_balls_left": 0,
@@ -45,6 +49,20 @@ def add_derived(df: pd.DataFrame) -> pd.DataFrame:
     total_balls = (out.balls_left + out.balls_bowled).clip(lower=1)
     out["frac_balls_left"] = out.balls_left / total_balls
     return out
+
+
+def recency_weights(df: pd.DataFrame, half_life: float | None) -> np.ndarray:
+    """Sample weights that halve every ``half_life`` seasons back from the latest season.
+
+    Recent seasons describe today's game better; older seasons still add volume.
+    ``None`` or 0 gives equal weights.
+    """
+    if not half_life:
+        return np.ones(len(df), dtype=np.float32)
+    years = df.start_date.dt.year.to_numpy()
+    age = years.max() - years
+    w = 0.5 ** (age / half_life)
+    return (w / w.mean()).astype(np.float32)
 
 
 def feature_matrix(df: pd.DataFrame) -> np.ndarray:

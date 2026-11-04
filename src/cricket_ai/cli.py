@@ -102,6 +102,7 @@ def winprob_train(
     max_epochs: int = typer.Option(60, help="Upper bound; early stopping usually ends sooner"),
     device: str = typer.Option("auto", help="auto, cpu, cuda or mps"),
     test_seasons: int = typer.Option(2, help="Most recent seasons held out for testing"),
+    half_life: float = typer.Option(4.0, help="Recency weighting half-life in seasons; 0 = off"),
 ):
     """Fit baselines and the PyTorch MLP, calibrate, evaluate on held-out seasons."""
     import pandas as pd
@@ -115,7 +116,7 @@ def winprob_train(
         split = season_split(states, test_seasons=test_seasons)
     except ValueError:
         split = date_split(states)  # too few seasons: fall back to a chronological split
-    cfg = TrainConfig(max_epochs=max_epochs, device=device)
+    cfg = TrainConfig(max_epochs=max_epochs, device=device, recency_half_life=half_life or None)
     result = run_experiment(
         states,
         report_dir=config.REPORTS_DIR / dataset / "winprob",

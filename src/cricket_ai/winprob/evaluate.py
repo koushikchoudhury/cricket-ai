@@ -41,7 +41,9 @@ def run_experiment(
     model_dir.mkdir(parents=True, exist_ok=True)
     log.info("Split: %s %s", split.description, split.sizes())
 
-    baselines = fit_baselines(split.train, split.val, seed=cfg.seed)
+    baselines = fit_baselines(
+        split.train, split.val, seed=cfg.seed, half_life=cfg.recency_half_life
+    )
     net, hist = mlp.train_mlp(split.train, split.val, cfg)
     mlp.save(net, cfg, hist, model_dir / "winprob_mlp.pt")
     joblib.dump(baselines, model_dir / "winprob_baselines.joblib")
@@ -65,7 +67,7 @@ def run_experiment(
         "mlp_training": {
             "best_epoch": hist.best_epoch,
             "epochs_run": len(hist.val_loss),
-            "temperature": round(hist.temperature, 4),
+            "calibration": {"scale": round(hist.calib_scale, 4), "bias": round(hist.calib_bias, 4)},
             "config": asdict(cfg),
         },
     }
@@ -123,6 +125,8 @@ def _markdown(result: dict, table: pd.DataFrame, stages: pd.DataFrame) -> str:
         f"{stages.to_markdown(index=False)}\n\n"
         "## MLP training\n\n"
         f"Best epoch {tr['best_epoch']} of {tr['epochs_run']}, "
-        f"calibration temperature {tr['temperature']}.\n\n"
+        f"Platt calibration scale {tr['calibration']['scale']}, "
+        f"bias {tr['calibration']['bias']}. "
+        f"Recency half-life: {tr['config']['recency_half_life'] or 'off'} seasons.\n\n"
         "![reliability](reliability.png)\n\n![training](training_curve.png)\n"
     )

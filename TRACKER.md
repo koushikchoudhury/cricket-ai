@@ -34,12 +34,33 @@ model with an evaluation write-up, and a win-probability curve for any match.
 - [ ] First-innings model (projected score → win probability) so curves cover the whole match
 - [x] Calibration: reliability diagram, Brier score, log loss, ECE; temperature scaling
 - [x] Evaluation code for held-out seasons vs baselines, including metrics by chase stage
-- [ ] Run on real IPL data and record the results here
+- [x] Run 1 on real IPL data (results below): era drift found
+- [x] Era fixes: par score from earlier matches, recency weighting, Platt calibration
+- [ ] Run 2 with the era fixes; ablation with `--half-life 0`
 - [x] Win-probability curve plot and "key moments" (largest swings) per match
 - [ ] Notebook: EDA and model report
 - [ ] Model card
 
 **Metrics:** log loss, Brier score, ECE, AUC on a held-out season split.
+
+### Results
+
+**Run 1** (2026-11-04). Train 2008–2023 (984 matches), val 2024 (71), test 2025–26 (140 matches, 15,921 states).
+
+| model | log loss | Brier | ECE | AUC |
+|---|---|---|---|---|
+| MLP (PyTorch) | **0.403** | **0.129** | 0.085 | 0.913 |
+| Logistic | 0.405 | 0.132 | 0.099 | **0.914** |
+| GBM, monotone | 0.526 | 0.165 | 0.129 | 0.879 |
+| Base rate | 0.689 | 0.248 | 0.036 | 0.500 |
+
+MLP by chase stage: ECE 0.152 early, 0.080 middle, 0.047 late.
+
+Findings:
+- The MLP only edges logistic regression: most signal is near-linear in runs, balls and wickets.
+- **Era drift.** Every model under-predicts the chasing side on 2025–26 (reliability curves sit above the diagonal), worst early in the chase, when difficulty depends on the scoring environment. Consistent with higher scoring after the 2023 Impact Player rule.
+- Gradient boosting suffers most: trees cannot extrapolate to targets above the training range.
+- Temperature scaling (0.93) cannot correct a shift, only sharpen or soften.
 
 ## 2. Synthetic data (GAN, CTGAN)
 
@@ -122,3 +143,4 @@ with teardown, and CI that builds images.
 
 - 2026-11-04: Scaffold, data pipeline, analytics, chase-state features, tests, data Dockerfile, CI.
 - 2026-11-04: Pipeline verified on real IPL data. Win-probability baselines, PyTorch MLP, calibration, evaluation and curves (PR #1).
+- 2026-11-04: Run 1 found era drift; added par score, recency weighting and Platt calibration.

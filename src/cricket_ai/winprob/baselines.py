@@ -9,14 +9,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from cricket_ai.winprob.data import FEATURES, LABEL, MONOTONIC, feature_matrix
+from cricket_ai.winprob.data import FEATURES, LABEL, MONOTONIC, feature_matrix, recency_weights
 
 
 class BaseRate:
     """Predicts the training-set chasing win rate for every state."""
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> BaseRate:
-        self.rate_ = float(np.mean(y))
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight=None) -> BaseRate:
+        self.rate_ = float(np.average(y, weights=sample_weight))
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
@@ -44,15 +44,23 @@ def make_baselines(seed: int = 42) -> dict[str, object]:
     }
 
 
-def fit_baselines(train: pd.DataFrame, val: pd.DataFrame, seed: int = 42) -> dict[str, object]:
+def fit_baselines(
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    seed: int = 42,
+    half_life: float | None = None,
+) -> dict[str, object]:
     X, y = feature_matrix(train), train[LABEL].to_numpy()
     X_val, y_val = feature_matrix(val), val[LABEL].to_numpy()
+    w = recency_weights(train, half_life)
     models = make_baselines(seed)
     for name, model in models.items():
         if name == "gbm_monotone":
-            model.fit(X, y, X_val=X_val, y_val=y_val)
+            model.fit(X, y, sample_weight=w, X_val=X_val, y_val=y_val)
+        elif name == "logistic":
+            model.fit(X, y, logisticregression__sample_weight=w)
         else:
-            model.fit(X, y)
+            model.fit(X, y, sample_weight=w)
     return models
 
 

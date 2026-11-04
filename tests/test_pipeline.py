@@ -109,3 +109,21 @@ def test_season_summary_handles_no_result():
     )
     s = team_season_summary(m).set_index("team")
     assert s.loc["X", "no_result"] == 1 and pd.isna(s.loc["X", "win_pct"])
+
+
+def test_par_score_uses_only_earlier_matches(built):
+    from cricket_ai.data.features import DEFAULT_PAR_RPO, first_innings_par
+
+    par = first_innings_par(built.matches, built.deliveries)
+    order = built.matches.sort_values(["start_date", "match_id"]).match_id.tolist()
+    assert par[order[0]] == DEFAULT_PAR_RPO  # nothing earlier to learn from
+    assert par.notna().all()
+
+    # Change one match's first innings: only matches *after* it may see a different par.
+    k = order[20]
+    d2 = built.deliveries.copy()
+    d2.loc[(d2.match_id == k) & (d2.innings == 1), "runs_total"] += 30
+    par2 = first_innings_par(built.matches, d2)
+    before = order[: order.index(k) + 1]
+    assert (par[before] == par2[before]).all()
+    assert (par[order[21:]] != par2[order[21:]]).any()

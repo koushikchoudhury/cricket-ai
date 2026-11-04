@@ -12,7 +12,13 @@ from cricket_ai.data.build import build_tables  # noqa: E402
 from cricket_ai.data.features import chase_states  # noqa: E402
 from cricket_ai.winprob import model as mlp  # noqa: E402
 from cricket_ai.winprob.curve import key_moments, match_curve  # noqa: E402
-from cricket_ai.winprob.data import FEATURES, add_derived, date_split, season_split  # noqa: E402
+from cricket_ai.winprob.data import (  # noqa: E402
+    FEATURES,
+    add_derived,
+    date_split,
+    recency_weights,
+    season_split,
+)
 from cricket_ai.winprob.evaluate import run_experiment  # noqa: E402
 from cricket_ai.winprob.metrics import all_metrics, ece  # noqa: E402
 
@@ -62,7 +68,7 @@ def test_mlp_learns_and_is_sensible(tables):
     split = season_split(states, test_seasons=1, val_seasons=1)
     model, hist = mlp.train_mlp(split.train, split.val, FAST)
     assert hist.val_loss[hist.best_epoch - 1] < 0.6  # far better than a coin flip (0.693)
-    assert 0.25 <= hist.temperature <= 4.0
+    assert 0.25 <= hist.calib_scale <= 4.0 and -3 <= hist.calib_bias <= 3
 
     base = split.test.iloc[[0]].copy()
     base[["balls_left", "balls_bowled", "wickets_in_hand", "target"]] = [30, 90, 7, 170]
@@ -85,7 +91,8 @@ def test_checkpoint_roundtrip(tables, tmp_path):
     mlp.save(model, cfg, hist, tmp_path / "m.pt")
     loaded = mlp.load(tmp_path / "m.pt")
     assert np.allclose(mlp.predict_proba(model, split.test), mlp.predict_proba(loaded, split.test))
-    assert float(loaded.temperature) == pytest.approx(hist.temperature)
+    assert float(loaded.calib_scale) == pytest.approx(hist.calib_scale)
+    assert float(loaded.calib_bias) == pytest.approx(hist.calib_bias)
 
 
 def test_experiment_and_curve(tables, tmp_path):
@@ -109,3 +116,26 @@ def test_experiment_and_curve(tables, tmp_path):
     assert curve.delivery_seq.iloc[0] == 0 and curve.balls_bowled.iloc[0] == 0
     assert curve.win_prob.between(0, 1).all()
     assert len(key_moments(curve, 3)) == 3
+
+
+def test_recency_weights(tables):
+    _, _, states = tables
+    w = recency_weights(states, half_life=2)
+    years = states.start_date.dt.year.to_numpy()
+    assert w.mean() == pytest.approx(1.0, rel=1e-4)
+    latest, oldest = w[years == years.max()][0], w[years == years.min()][0]
+    assert latest / oldest == pytest.approx(2 ** ((years.max() - years.min()) / 2), rel=1e-4)
+    assert (recency_weights(states, None) == 1).all()
+
+
+def test_platt_calibration_fixes_a_shift(tables):
+    _, _, states = tables
+    split = season_split(states, test_seasons=1, val_seasons=1)
+    model, _ = mlp.train_mlp(split.train, split.val, FAST)
+    x = torch.from_numpy(mlp.feature_matrix(split.val))
+    y = torch.from_numpy(split.val.chasing_team_won.to_numpy(dtype=np.float32))
+    # Flip a third of the losses to wins: the validation era is now easier to chase in.
+    flip = (y == 0) & (torch.arange(len(y)) % 3 == 0)
+    y_shift = torch.where(flip, torch.ones_like(y), y)
+    _, bias = mlp.calibrate(model, x, y_shift)
+    assert bias > 0  # calibration shifts probabilities up, which temperature alone cannot do
