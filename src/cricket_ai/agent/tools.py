@@ -36,7 +36,7 @@ class ToolCall:
     args: dict
     seconds: float
     ok: bool
-    output_preview: str
+    output: str
 
 
 @dataclass
@@ -97,28 +97,145 @@ def run_sql(ctx: CricketContext, query: str) -> str:
     return _table(ctx.sql.run(query))
 
 
-def player_stats(ctx: CricketContext, player: str, season: str | None = None) -> str:
-    like = f"%{player.strip()}%"
-    where = "player ILIKE ?" + (" AND season = ?" if season else "")
-    params = [like, str(season)] if season else [like]
+def normalise_season(season) -> str | None:
+    """Accept 2016, '2016', '2016 season', 'IPL 2016'. Returns None for no season."""
+    if season is None:
+        return None
+    s = str(season).lower().replace("season", "").replace("ipl", "").strip()
+    return s or None
+
+
+def _season_clause(season: str | None) -> tuple[str, list]:
+    """SQL filter for a season; '2020' also matches split seasons stored as '2020/21'."""
+    if not season:
+        return "", []
+    if "/" in season:
+        return " AND season = ?", [season]
+    return " AND (season = ? OR season LIKE ?)", [season, f"{season}/%"]
+
+
+def _num(x, fmt="{:.0f}") -> str:
+    return "n/a" if x is None or pd.isna(x) else fmt.format(x)
+
+
+def player_stats(ctx: CricketContext, player: str, season: str | int | None = None) -> str:
+    season = normalise_season(season)
+    clause, sparams = _season_clause(season)
+    params = [f"%{player.strip()}%", *sparams]
     bat = ctx.sql.con.execute(
-        f"""SELECT player, {"season," if season else ""} COUNT(*) AS innings, SUM(runs) AS runs,
-                   SUM(balls) AS balls, ROUND(100.0 * SUM(runs) / NULLIF(SUM(balls), 0), 1) AS strike_rate,
-                   ROUND(SUM(runs) / NULLIF(SUM(CASE WHEN NOT not_out THEN 1 ELSE 0 END), 0), 2) AS average,
-                   MAX(runs) AS highest
-            FROM batting WHERE {where} GROUP BY ALL ORDER BY runs DESC LIMIT 5""",
+        f"""SELECT player, COUNT(*) AS innings, SUM(runs) AS runs, SUM(balls) AS balls,
+                   SUM(CASE WHEN NOT not_out THEN 1 ELSE 0 END) AS outs, MAX(runs) AS highest
+            FROM batting WHERE player ILIKE ?{clause} GROUP BY player""",
         params,
     ).df()
     bowl = ctx.sql.con.execute(
-        f"""SELECT player, {"season," if season else ""} COUNT(DISTINCT match_id) AS matches,
-                   SUM(wickets) AS wickets, SUM(runs_conceded) AS runs_conceded,
-                   ROUND(6.0 * SUM(runs_conceded) / NULLIF(SUM(balls), 0), 2) AS economy
-            FROM bowling WHERE {where} GROUP BY ALL ORDER BY wickets DESC LIMIT 5""",
+        f"""SELECT player, COUNT(DISTINCT match_id) AS matches, SUM(balls) AS balls_bowled,
+                   SUM(wickets) AS wickets, SUM(runs_conceded) AS runs_conceded
+            FROM bowling WHERE player ILIKE ?{clause} GROUP BY player""",
         params,
     ).df()
-    if bat.empty and bowl.empty:
-        return f"No player matching '{player}'" + (f" in season {season}" if season else "") + "."
-    return f"Batting:\n{_table(bat)}\n\nBowling:\n{_table(bowl)}"
+    when = f"the {season} season" if season else "all seasons"
+    runs_by = bat.set_index("player").runs
+    names = sorted(set(bat.player) | set(bowl.player), key=lambda n: -runs_by.get(n, 0))
+    if not names:
+        return f"No player matching '{player}' in {when}."
+    lines = []
+    if len(names) > 1:
+        lines.append(f"{len(names)} players match '{player}'; showing up to 3.")
+    bat_i, bowl_i = bat.set_index("player"), bowl.set_index("player")
+    for name in names[:3]:
+        # Batting and bowling are reported separately: runs conceded as a bowler are never
+        # added to, or worded as, runs scored.
+        if name in bat_i.index:
+            b = bat_i.loc[name]
+            sr = 100 * b.runs / b.balls if b.balls else None
+            avg = _num(b.runs / b.outs, "{:.2f}") if b.outs else "n/a (never dismissed)"
+            batting = (
+                f"BATTING: scored {_num(b.runs)} runs in {_num(b.innings)} innings off "
+                f"{_num(b.balls)} balls, strike rate {_num(sr, '{:.1f}')}, average {avg}, "
+                f"highest score {_num(b.highest)}."
+            )
+        else:
+            batting = "BATTING: did not bat."
+        if name in bowl_i.index and bowl_i.loc[name].balls_bowled:
+            w = bowl_i.loc[name]
+            econ = 6 * w.runs_conceded / w.balls_bowled
+            overs = f"{int(w.balls_bowled) // 6}.{int(w.balls_bowled) % 6}"
+            bowling = (
+                f"BOWLING: took {_num(w.wickets)} wickets in {_num(w.matches)} matches, "
+                f"bowled {overs} overs and conceded {_num(w.runs_conceded)} runs "
+                f"(economy {econ:.2f})."
+            )
+        else:
+            bowling = "BOWLING: did not bowl."
+        lines.append(f"{name}, {when}. {batting} {bowling}")
+    return "\n".join(lines)
+
+
+LEADERBOARD_STATS = {
+    # stat: (table, value expression, order, unit, minimum balls for rate stats)
+    "runs": ("batting", "SUM(runs)", "DESC", "runs scored", 0),
+    "wickets": ("bowling", "SUM(wickets)", "DESC", "wickets taken", 0),
+    "strike_rate": (
+        "batting",
+        "ROUND(100.0 * SUM(runs) / SUM(balls), 1)",
+        "DESC",
+        "strike rate",
+        100,
+    ),
+    "economy": (
+        "bowling",
+        "ROUND(6.0 * SUM(runs_conceded) / SUM(balls), 2)",
+        "ASC",
+        "economy (runs conceded per over)",
+        120,
+    ),
+    "sixes": (
+        "deliveries",
+        "SUM(CASE WHEN runs_batter = 6 THEN 1 ELSE 0 END)",
+        "DESC",
+        "sixes hit",
+        0,
+    ),
+    "fours": (
+        "deliveries",
+        "SUM(CASE WHEN runs_batter = 4 THEN 1 ELSE 0 END)",
+        "DESC",
+        "fours hit",
+        0,
+    ),
+}
+
+
+def leaderboard(
+    ctx: CricketContext, stat: str = "runs", season: str | int | None = None, n: int = 5
+) -> str:
+    stat = stat.lower().strip().replace(" ", "_")
+    if stat not in LEADERBOARD_STATS:
+        return f"Unknown stat {stat!r}. Choose from: {', '.join(LEADERBOARD_STATS)}."
+    table, expr, order, unit, min_balls = LEADERBOARD_STATS[stat]
+    season = normalise_season(season)
+    clause, params = _season_clause(season)
+    n = int(min(max(int(n), 1), 20))
+    if table == "deliveries":
+        sql = f"""SELECT d.batter AS player, {expr} AS value FROM deliveries d
+                  JOIN matches m USING (match_id)
+                  WHERE NOT d.is_super_over{clause.replace("season", "m.season")}
+                  GROUP BY 1 ORDER BY value {order} LIMIT {n}"""
+    else:
+        if not season:
+            min_balls *= 5
+        having = f"HAVING SUM(balls) >= {min_balls}" if min_balls else ""
+        sql = f"""SELECT player, {expr} AS value FROM {table} WHERE TRUE{clause}
+                  GROUP BY player {having} ORDER BY value {order} LIMIT {n}"""
+    rows = ctx.sql.con.execute(sql, params).df()
+    when = f"the {season} season" if season else "all seasons"
+    if rows.empty:
+        return f"No data for {unit} in {when}."
+    note = f" (minimum {min_balls} balls)" if min_balls else ""
+    lines = [f"Top {len(rows)} by {unit} in {when}{note}:"]
+    lines += [f"{i}. {r.player}: {r.value:g}" for i, r in enumerate(rows.itertuples(), 1)]
+    return "\n".join(lines)
 
 
 def win_probability(
@@ -205,9 +322,7 @@ def _traced(ctx: CricketContext, name: str, fn):
             out, ok = _clip(fn(ctx, **kwargs)), True
         except Exception as exc:  # noqa: BLE001 - the model sees the error and can recover
             out, ok = f"Error: {type(exc).__name__}: {exc}", False
-        ctx.calls.append(
-            ToolCall(name, kwargs, round(time.perf_counter() - start, 3), ok, out[:300])
-        )
+        ctx.calls.append(ToolCall(name, kwargs, round(time.perf_counter() - start, 3), ok, out))
         return out
 
     return run
@@ -230,16 +345,25 @@ def build_tools(ctx: CricketContext) -> list[StructuredTool]:
             (
                 player_stats,
                 "player_stats",
-                "Batting and bowling totals for a player, optionally for one season "
-                "(e.g. season='2016'). Partial names work, e.g. 'Kohli'.",
+                "One player's batting and bowling, optionally for one season "
+                "(e.g. season='2016'). Partial names work, e.g. 'Kohli'. Not for rankings.",
+            )
+        )
+        specs.append(
+            (
+                leaderboard,
+                "leaderboard",
+                "Rank players: who scored the most runs, took the most wickets, hit the most "
+                "sixes or fours, or had the best strike rate or economy, overall or in one "
+                f"season. stat is one of: {', '.join(LEADERBOARD_STATS)}.",
             )
         )
         specs.append(
             (
                 run_sql,
                 "run_sql",
-                "Run one read-only DuckDB SELECT for questions player_stats cannot answer "
-                "(rankings, records, team totals).\n" + SCHEMA,
+                "Run one read-only DuckDB SELECT for anything the other tools cannot answer "
+                "(team totals, records, custom filters).\n" + SCHEMA,
             )
         )
     if ctx.winprob_model is not None:
@@ -293,7 +417,7 @@ def summarise_calls(calls: list[ToolCall]) -> pd.DataFrame:
     return (
         pd.DataFrame([vars(c) for c in calls])
         if calls
-        else pd.DataFrame(columns=["name", "args", "seconds", "ok", "output_preview"])
+        else pd.DataFrame(columns=["name", "args", "seconds", "ok", "output"])
     )
 
 

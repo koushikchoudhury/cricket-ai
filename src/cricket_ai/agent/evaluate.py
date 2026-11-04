@@ -3,12 +3,14 @@
 Tasks are generated from the data, so each has an expected tool and an expected answer:
 
 * ``season_runs``    - a player's runs in a season            -> player_stats or run_sql
-* ``top_scorer``     - who scored most runs in a season        -> run_sql or player_stats
+* ``top_scorer``     - who scored most runs in a season        -> leaderboard or run_sql
 * ``match_winner``   - who won a given match                   -> search_cricket
 * ``chase``          - win probability for a chase situation   -> win_probability
 * ``synthetic``      - summarise GAN-generated overs           -> generate_synthetic_overs
 
-Reported: tool-choice accuracy, answer accuracy, steps and latency per task type.
+Reported: tool-choice accuracy, numeric faithfulness (every number in the answer appears in
+the question or a tool output), answer accuracy, steps and latency per task type. An answer
+counts as correct only if it is also faithful.
 """
 
 from __future__ import annotations
@@ -21,12 +23,13 @@ import numpy as np
 import pandas as pd
 
 from cricket_ai.agent.tools import CricketContext
+from cricket_ai.faithfulness import unsupported_numbers
 from cricket_ai.rag.corpus import fmt_date
 from cricket_ai.rag.evaluate import answer_correct
 
 EXPECTED_TOOLS = {
     "season_runs": {"player_stats", "run_sql"},
-    "top_scorer": {"run_sql", "player_stats"},
+    "top_scorer": {"leaderboard", "run_sql"},
     "match_winner": {"search_cricket"},
     "chase": {"win_probability"},
     "synthetic": {"generate_synthetic_overs"},
@@ -101,16 +104,23 @@ def generate_tasks(ctx: CricketContext, per_type: int = 4, seed: int = 7) -> lis
     return tasks
 
 
-def score_task(task: dict, answer: str, tools_used: list[str]) -> dict:
-    expected_tools = EXPECTED_TOOLS[task["type"]]
-    right_tool = bool(expected_tools & set(tools_used))
+def score_task(
+    task: dict, answer: str, tools_used: list[str], tool_outputs: list[str] | None = None
+) -> dict:
+    right_tool = bool(EXPECTED_TOOLS[task["type"]] & set(tools_used))
+    invented = unsupported_numbers(answer, task["question"], *(tool_outputs or []))
     if task["type"] == "chase":
         correct = right_tool and bool(PERCENT.search(answer))
     elif task["type"] == "synthetic":
         correct = right_tool and bool(re.search(r"\d", answer))
     else:
         correct = answer_correct(task["expected"], answer)
-    return {"right_tool": right_tool, "correct": correct}
+    return {
+        "right_tool": right_tool,
+        "faithful": not invented,
+        "invented_numbers": ",".join(invented),
+        "correct": bool(correct and not invented),
+    }
 
 
 def evaluate_agent(agent, tasks: list[dict]) -> pd.DataFrame:
@@ -118,16 +128,10 @@ def evaluate_agent(agent, tasks: list[dict]) -> pd.DataFrame:
     for t in tasks:
         try:
             r = agent.ask(t["question"])
-            answer, used, steps, secs, limit = (
-                r.answer,
-                r.tools_used,
-                r.steps,
-                r.seconds,
-                r.stopped_by_limit,
-            )
-            error = None
+            answer, used, outputs = r.answer, r.tools_used, [c["output"] for c in r.tool_calls]
+            steps, secs, limit, error = r.steps, r.seconds, r.stopped_by_limit, None
         except Exception as exc:  # noqa: BLE001 - one failing task should not stop the run
-            answer, used, steps, secs, limit, error = "", [], 0, 0.0, False, str(exc)
+            answer, used, outputs, steps, secs, limit, error = "", [], [], 0, 0.0, False, str(exc)
         rows.append(
             {
                 "type": t["type"],
@@ -139,7 +143,7 @@ def evaluate_agent(agent, tasks: list[dict]) -> pd.DataFrame:
                 "seconds": secs,
                 "step_limit": limit,
                 "error": error,
-                **score_task(t, answer, used),
+                **score_task(t, answer, used, outputs),
             }
         )
     return pd.DataFrame(rows)
@@ -152,6 +156,7 @@ def write_report(results: pd.DataFrame, out: Path, llm: str) -> dict:
         .agg(
             tasks=("question", "size"),
             right_tool=("right_tool", "mean"),
+            faithful=("faithful", "mean"),
             correct=("correct", "mean"),
             steps=("steps", "mean"),
             seconds=("seconds", "median"),
@@ -162,6 +167,7 @@ def write_report(results: pd.DataFrame, out: Path, llm: str) -> dict:
         "llm": llm,
         "tasks": len(results),
         "tool_accuracy": round(float(results.right_tool.mean()), 3),
+        "faithfulness": round(float(results.faithful.mean()), 3),
         "answer_accuracy": round(float(results.correct.mean()), 3),
         "mean_steps": round(float(results.steps.mean()), 2),
         "median_seconds": round(float(results.seconds.median()), 2),
@@ -172,11 +178,16 @@ def write_report(results: pd.DataFrame, out: Path, llm: str) -> dict:
     (out / "metrics.json").write_text(
         json.dumps({**summary, "by_type": by_type.to_dict(orient="index")}, indent=2, default=str)
     )
+    bad = results[~results.faithful][["type", "question", "invented_numbers", "answer"]]
     (out / "report.md").write_text(
         f"# Agent evaluation ({llm})\n\n"
-        f"{summary['tasks']} tasks. Tool choice {summary['tool_accuracy']:.0%}, answers "
-        f"{summary['answer_accuracy']:.0%}, {summary['mean_steps']} tool rounds on average, "
-        f"median {summary['median_seconds']}s per task, {summary['step_limit_hits']} step-limit "
-        f"stops, {summary['errors']} errors.\n\n{by_type.to_markdown()}\n"
+        f"{summary['tasks']} tasks. Tool choice {summary['tool_accuracy']:.0%}, faithful "
+        f"{summary['faithfulness']:.0%}, correct {summary['answer_accuracy']:.0%} "
+        f"(correct requires faithful), {summary['mean_steps']} tool rounds on average, median "
+        f"{summary['median_seconds']}s per task, {summary['step_limit_hits']} step-limit stops, "
+        f"{summary['errors']} errors.\n\n{by_type.to_markdown()}\n\n"
+        "## Answers with numbers not found in the question or tool outputs\n\n"
+        + (bad.to_markdown(index=False) if len(bad) else "None.")
+        + "\n"
     )
     return summary

@@ -178,7 +178,10 @@ and clips, with an evaluation set and scores.
 - [x] Eval set generated from the tables: 5 question types with known answers and source ids
 - [x] Metrics: recall@1/5/10 and MRR for BM25, dense and hybrid; answer accuracy with an LLM
 - [ ] Index IPL with bge-small on the GPU and record retrieval results
-- [ ] Run the answer evaluation with an LLM and record accuracy by route
+- [x] Answer eval run 1 (qwen2.5:3b): retrieval hybrid recall@5 1.00, MRR 0.948; answers 100% but only
+      match questions were sampled (eval bug, now stratified across types) and the final's answer mixed
+      details from two matches (now caught by the faithfulness check)
+- [ ] Answer eval run 2 across all question types, with faithfulness
 - [ ] Commentary text (Cricsheet has none; needs another source)
 - [ ] Reranker (cross-encoder) and an LLM-judge for faithfulness
 - [ ] FastAPI service (module 6)
@@ -198,8 +201,32 @@ traces and an evaluation.
 - [x] Task eval generated from the data: tool-choice accuracy, answer accuracy, steps, latency
 - [x] CLI (`agent ask / chat / evaluate / graph`) and a Gradio chat UI (`agent ui`)
 - [x] Tests with a scripted fake model: tool use, error recovery, step limit, approval, scoring
-- [ ] Run the evaluation with a real LLM (Ollama qwen2.5:3b and/or an API) and record results
+- [x] Run 1 with Ollama qwen2.5:3b (17 tasks): tool choice 100%, answers 71%; exposed eval and tool flaws (below)
+- [x] Fixes: leaderboard tool, labelled batting/bowling output, tolerant season args, numeric faithfulness
+- [ ] Run 2 with the fixes and record results
 - [ ] Vision tool once module 3 exists
+
+### Run 1 (2026-11-04, Ollama qwen2.5:3b on GTX 1650)
+
+| task | tasks | right tool | correct | median s |
+|---|---|---|---|---|
+| chase | 4 | 1.00 | 1.00* | 3.3 |
+| match_winner | 4 | 1.00 | 1.00 | 7.6 |
+| season_runs | 4 | 1.00 | 0.75 | 2.9 |
+| synthetic | 1 | 1.00 | 1.00 | 3.2 |
+| top_scorer | 4 | 1.00* | 0.00 | 2.2 |
+
+\* overstated, found by reading the answers:
+- **top_scorer**: the model used player_stats, which cannot rank players, and the eval counted it
+  as a right tool. Added a `leaderboard` tool and fixed the expected tools.
+- **chase**: right tool and probability, but two answers misquoted the situation ("120/2" for 100/2,
+  "102 balls" for 12). Scoring only checked for a %. Added numeric faithfulness: every number in an
+  answer must appear in the question or a tool output, and correct now requires faithful.
+- **season_runs miss** (Shubman Gill 2026): the model passed season as a number, the tool schema
+  rejected it, and the model reported "no such player". Seasons now accept 2026, "2026 season",
+  and "2020" matches "2020/21".
+- **Wording**: the 3B model described a bowler's runs conceded as "runs in bowling". player_stats
+  now returns labelled sentences (BATTING: scored ... / BOWLING: conceded ...; "did not bowl").
 
 ## 6. Docker, Kubernetes, AWS
 

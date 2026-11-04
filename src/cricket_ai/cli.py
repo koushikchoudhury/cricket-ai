@@ -412,6 +412,7 @@ def rag_evaluate(
         evaluate_answers,
         evaluate_retrieval,
         generate_questions,
+        stratified,
         summarise_retrieval,
         write_report,
     )
@@ -424,11 +425,15 @@ def rag_evaluate(
     typer.echo(f"Recall@5 by type:\n{by_type.to_markdown()}\n")
     answered = None
     if rag.llm is not None:
-        subset = questions[:answers] if answers else questions
+        subset = stratified(questions, answers) if answers else questions
         typer.echo(f"Answering {len(subset)} questions with {provider}:{model_name} ...")
         answered = evaluate_answers(rag, subset)
-        typer.echo(f"Answer accuracy: {answered.correct.mean():.1%}")
-        typer.echo(answered.groupby("type").correct.mean().round(3).to_markdown())
+        typer.echo(
+            f"Correct {answered.correct.mean():.1%} (requires faithful), "
+            f"faithful {answered.faithful.mean():.1%}"
+        )
+        answer_by_type = answered.groupby("type")[["correct", "faithful"]].mean().round(3)
+        typer.echo(answer_by_type.to_markdown())
     out = config.REPORTS_DIR / dataset / "rag"
     meta = {
         "n_questions": len(questions),

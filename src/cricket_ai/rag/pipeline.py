@@ -30,6 +30,9 @@ ANSWER_SYSTEM = (
     "- Numbered sources [1], [2], ... are retrieved documents; cite the ones you use.\n"
     "- If an SQL result is given, trust it for numbers and say it came from the database.\n"
     "- If the context does not contain the answer, say so plainly. Do not guess.\n"
+    "- Use only the source that matches the question (the right match, date and stage); "
+    "do not mix details from different matches.\n"
+    "- Copy numbers exactly as they appear in the sources or SQL result.\n"
     "- Be concise: one to three sentences."
 )
 
@@ -44,6 +47,7 @@ class Answer:
     rows: list[dict] | None = None
     error: str | None = None
     seconds: float = 0.0
+    context: str = ""  # everything the answer was allowed to use (for faithfulness checks)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -116,6 +120,9 @@ class CricketRAG:
             if rows is not None:
                 answer.rows = rows.head(50).to_dict(orient="records")
 
+        answer.context = format_context(hits) + (
+            f"\n\nSQL result:\n{format_rows(rows)}" if rows is not None else ""
+        )
         if self.llm is None:
             answer.text = (
                 "No LLM configured (use --llm ollama|anthropic|openai for a written answer). "
