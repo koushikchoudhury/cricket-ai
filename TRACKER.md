@@ -4,7 +4,7 @@ Status: ✅ done · 🟡 in progress · ⚪ not started. Update this file in the
 
 | Module | Status | Next step |
 |---|---|---|
-| 1. Data, analytics, win probability | 🟡 | Run pipeline on full IPL + T20I data; train the win-probability MLP |
+| 1. Data, analytics, win probability | 🟡 | Train on real IPL data and review the report; first-innings model |
 | 2. Synthetic data | ⚪ | Decide the synthetic target table (match-level vs over-level sequences) |
 | 3. Video and image analysis | ⚪ | Source and label a small broadcast-frame dataset |
 | 4. Multimodal RAG | ⚪ | Build the scorecard and commentary corpus |
@@ -24,14 +24,18 @@ model with an evaluation write-up, and a win-probability curve for any match.
 - [x] Validation and `quality_report.json`
 - [x] Analytics: batting, bowling, phase, team-season summaries
 - [x] Chase-state feature table and time-based split
-- [ ] Run on full IPL and T20I archives; review the quality report
+- [x] Run on the full IPL archive: 1,243 matches, 0 quality errors, leaders check out
+- [ ] Run on the T20I archive
+- [ ] Normalise franchise renames (e.g. Kings XI Punjab → Punjab Kings) for team-level analysis
 - [ ] DuckDB query layer for ad-hoc SQL (also used by the agent in module 5)
-- [ ] Baselines: logistic regression and gradient boosting on chase states
-- [ ] **Hand-written PyTorch MLP** win-probability model (custom Dataset, training loop, early stopping)
+- [x] Season-based train/val/test split with no shared matches
+- [x] Baselines: base rate, logistic regression, monotone gradient boosting
+- [x] **Hand-written PyTorch MLP** win-probability model (training loop, early stopping, checkpoint)
 - [ ] First-innings model (projected score → win probability) so curves cover the whole match
-- [ ] Calibration: reliability diagram, Brier score, log loss, ECE; temperature scaling
-- [ ] Evaluation on held-out recent seasons; compare against the baselines
-- [ ] Win-probability curve plot and "key moments" (largest swings) per match
+- [x] Calibration: reliability diagram, Brier score, log loss, ECE; temperature scaling
+- [x] Evaluation code for held-out seasons vs baselines, including metrics by chase stage
+- [ ] Run on real IPL data and record the results here
+- [x] Win-probability curve plot and "key moments" (largest swings) per match
 - [ ] Notebook: EDA and model report
 - [ ] Model card
 
@@ -117,3 +121,4 @@ with teardown, and CI that builds images.
 ## Log
 
 - 2026-11-04: Scaffold, data pipeline, analytics, chase-state features, tests, data Dockerfile, CI.
+- 2026-11-04: Pipeline verified on real IPL data. Win-probability baselines, PyTorch MLP, calibration, evaluation and curves (PR #1).
