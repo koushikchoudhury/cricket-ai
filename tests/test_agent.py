@@ -68,16 +68,50 @@ def ctx(built):
 
 
 def test_tools_offered_only_when_available(ctx):
-    assert [t.name for t in build_tools(ctx)] == ["search_cricket", "player_stats", "run_sql"]
+    names = [t.name for t in build_tools(ctx)]
+    assert names == ["search_cricket", "player_stats", "leaderboard", "run_sql"]
     assert build_tools(CricketContext()) == []
 
 
-def test_player_stats_tool(ctx):
+def test_player_stats_keeps_batting_and_bowling_apart(ctx):
     tool = {t.name: t for t in build_tools(ctx)}["player_stats"]
-    out = tool.invoke({"player": "B1"})
-    assert "| B1 " in out and "16" in out
+    b1 = tool.invoke({"player": "B1"})
+    # B1 scored 16 and, separately, conceded 15 as a bowler; nothing is added together
+    assert "B1, all seasons. BATTING: scored 16 runs in 1 innings off 5 balls" in b1
+    assert "BOWLING: took 1 wickets in 1 matches, bowled 1.0 overs and conceded 15 runs" in b1
+    assert "31" not in b1  # 16 + 15
+    assert "BOWLING: did not bowl." in tool.invoke({"player": "A2"})
     assert "No player matching" in tool.invoke({"player": "Nobody Atall"})
-    assert "2024" in tool.invoke({"player": "B1", "season": "2024"})
+
+
+@pytest.mark.parametrize("season", ["2024", 2024, "2024 season", "IPL 2024"])
+def test_player_stats_accepts_season_formats(ctx, season):
+    tool = {t.name: t for t in build_tools(ctx)}["player_stats"]
+    assert "B1, the 2024 season. BATTING: scored 16 runs" in tool.invoke(
+        {"player": "B1", "season": season}
+    )
+
+
+def test_split_seasons_match_their_first_year():
+    from cricket_ai.agent.tools import _season_clause, normalise_season
+
+    assert normalise_season(2020) == "2020" and normalise_season(None) is None
+    clause, params = _season_clause("2020")
+    assert params == ["2020", "2020/%"] and "LIKE" in clause
+    assert _season_clause("2007/08") == (" AND season = ?", ["2007/08"])
+
+
+def test_leaderboard(ctx):
+    tool = {t.name: t for t in build_tools(ctx)}["leaderboard"]
+    out = tool.invoke({"stat": "runs", "season": "2024", "n": 3})
+    assert out.startswith("Top 3 by runs scored in the 2024 season")
+    assert "1. B1: 16" in out
+    top = ctx.sql.con.execute(
+        "SELECT player FROM batting GROUP BY player ORDER BY SUM(runs) DESC LIMIT 1"
+    ).fetchone()[0]
+    assert f"1. {top}:" in tool.invoke({"stat": "runs"})
+    assert "Unknown stat" in tool.invoke({"stat": "catches"})
+    assert "economy" in tool.invoke({"stat": "economy", "season": 2024})
 
 
 def test_tool_errors_are_returned_not_raised(ctx):
@@ -139,14 +173,35 @@ def test_graph_diagram(ctx):
 def test_task_generation_and_scoring(ctx, tmp_path):
     tasks = generate_tasks(ctx, per_type=2)
     assert {t["type"] for t in tasks} == {"season_runs", "top_scorer", "match_winner"}
-    good = score_task(tasks[0], f"They scored {tasks[0]['expected']} runs", ["player_stats"])
-    assert good == {"right_tool": True, "correct": True}
-    assert score_task({"type": "chase", "expected": None}, "about 63%", ["win_probability"])[
+    first = next(t for t in tasks if t["type"] == "season_runs")
+    good = score_task(
+        first,
+        f"They scored {first['expected']} runs",
+        ["player_stats"],
+        [f"BATTING: scored {first['expected']} runs"],
+    )
+    assert good["right_tool"] and good["faithful"] and good["correct"]
+    top = next(t for t in tasks if t["type"] == "top_scorer")
+    assert not score_task(top, "No idea", ["player_stats"])["right_tool"]  # cannot rank players
+    chase = {
+        "type": "chase",
+        "expected": None,
+        "question": "A team chasing 180 is 100/2 after 12 overs. What is their chance?",
+    }
+    tool_out = "Chasing 180: 100/2 after 12.0 overs needs 80 off 48 balls. Win probability: 83.9%"
+    assert score_task(chase, "They have an 83.9% chance.", ["win_probability"], [tool_out])[
         "correct"
     ]
-    assert not score_task({"type": "chase", "expected": None}, "likely", ["win_probability"])[
-        "correct"
-    ]
+    # the run captured on 2026-11-04: right tool, right %, but misquoted the score as 120/2
+    misquote = score_task(
+        chase, "They are 120/2 with an 83.9% chance.", ["win_probability"], [tool_out]
+    )
+    assert (
+        not misquote["faithful"]
+        and not misquote["correct"]
+        and misquote["invented_numbers"] == "120"
+    )
+    assert not score_task(chase, "likely", ["win_probability"], [tool_out])["correct"]
 
     task = [t for t in tasks if t["type"] == "season_runs"][:1]
     llm = scripted(
@@ -156,6 +211,7 @@ def test_task_generation_and_scoring(ctx, tmp_path):
     results = evaluate_agent(CricketAgent(llm, ctx), task)
     summary = write_report(results, tmp_path, "scripted")
     assert summary["tool_accuracy"] == 1.0 and summary["answer_accuracy"] == 1.0
+    assert summary["faithfulness"] == 1.0
     assert (tmp_path / "report.md").exists()
 
 

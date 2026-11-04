@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from cricket_ai.faithfulness import unsupported_numbers
 from cricket_ai.rag.corpus import PHASE_LABEL, Document, fmt_date
 from cricket_ai.rag.retrieval import HybridRetriever
 
@@ -150,15 +151,30 @@ def answer_correct(expected: str, text: str) -> bool:
     return bool(tokens) and tokens[-1] in text
 
 
+def stratified(questions: list[dict], n: int) -> list[dict]:
+    """Up to ``n`` questions, taken round-robin across types so every type is tested."""
+    by_type: dict[str, list[dict]] = {}
+    for q in questions:
+        by_type.setdefault(q["type"], []).append(q)
+    out, i = [], 0
+    while len(out) < n and any(i < len(v) for v in by_type.values()):
+        out += [v[i] for v in by_type.values() if i < len(v)][: n - len(out)]
+        i += 1
+    return out
+
+
 def evaluate_answers(rag, questions: list[dict]) -> pd.DataFrame:
     rows = []
     for q in questions:
         a = rag.ask(q["question"])
+        invented = unsupported_numbers(a.text, q["question"], a.context)
         rows.append(
             {
                 "type": q["type"],
                 "route": a.route,
-                "correct": answer_correct(q["expected"], a.text),
+                "correct": answer_correct(q["expected"], a.text) and not invented,
+                "faithful": not invented,
+                "invented_numbers": ",".join(invented),
                 "expected": q["expected"],
                 "answer": a.text,
                 "sql": a.sql,
@@ -194,16 +210,27 @@ def write_report(
         "retrieval_by_type": by_type.to_dict(orient="index"),
     }
     if answers is not None:
-        acc = answers.groupby("type").correct.mean().round(3).reindex(QUESTION_TYPES).dropna()
+        acc = answers.groupby("type")[["correct", "faithful"]].mean().round(3)
+        acc = acc.reindex([t for t in QUESTION_TYPES if t in acc.index])
+        by_route = answers.groupby("route")[["correct", "faithful"]].mean().round(3)
+        bad = answers[~answers.faithful][["type", "question", "invented_numbers", "answer"]]
         md += [
             f"\n## Answers (LLM: {meta.get('llm')})\n",
-            f"Overall accuracy: **{answers.correct.mean():.1%}**; median latency "
-            f"{answers.seconds.median():.1f}s.\n\n",
-            acc.to_frame("accuracy").to_markdown(),
+            f"{len(answers)} questions, sampled evenly across types. Correct "
+            f"**{answers.correct.mean():.1%}** (requires faithful), faithful "
+            f"**{answers.faithful.mean():.1%}** (every number appears in the question or the "
+            f"retrieved context); median latency {answers.seconds.median():.1f}s.\n\n",
+            acc.to_markdown(),
+            "\n\nBy route:\n\n",
+            by_route.to_markdown(),
+            "\n",
+            "\n### Answers with numbers not found in the evidence\n\n",
+            bad.to_markdown(index=False) if len(bad) else "None.",
             "\n",
         ]
         result["answer_accuracy"] = float(answers.correct.mean())
-        result["answer_accuracy_by_type"] = acc.to_dict()
+        result["faithfulness"] = float(answers.faithful.mean())
+        result["answer_accuracy_by_type"] = acc.to_dict(orient="index")
         answers.to_csv(out / "answers.csv", index=False)
     (out / "report.md").write_text("\n".join(md))
     (out / "metrics.json").write_text(json.dumps(result, indent=2, default=str))

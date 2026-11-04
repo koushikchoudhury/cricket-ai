@@ -249,6 +249,30 @@ def test_generated_questions_and_retrieval_eval(docs, retriever, tmp_path):
     assert (tmp_path / "report.md").exists()
 
 
+def test_stratified_sampling_covers_every_type():
+    from cricket_ai.rag.evaluate import stratified
+
+    qs = [{"type": t, "i": i} for t in ("a", "b", "c") for i in range(10)]
+    picked = stratified(qs, 7)
+    assert len(picked) == 7 and {q["type"] for q in picked} == {"a", "b", "c"}
+    assert [q["type"] for q in picked[:3]] == ["a", "b", "c"]
+
+
+def test_answer_faithfulness_is_scored(retriever, sql):
+    q = [
+        {
+            "type": "season_runs",
+            "expected": "16",
+            "gold": "player:B1:2024",
+            "question": "How many runs did B1 score in the 2024 season?",
+        }
+    ]
+    llm = fake_llm("```sql\nSELECT 16 AS runs\n```", "B1 scored 16 runs, 31 in total.")
+    out = evaluate_answers(CricketRAG(retriever, sql, llm), q)
+    assert not out.faithful.iloc[0] and out.invented_numbers.iloc[0] == "31"
+    assert not out.correct.iloc[0]  # the right number plus an invented one is not correct
+
+
 def test_answer_scoring(retriever, sql):
     assert answer_correct("V Kohli", "Virat Kohli was player of the match")
     assert answer_correct("52", "They scored 52 runs.")
