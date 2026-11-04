@@ -28,9 +28,10 @@ embeddings = ["sentence-transformers>=3", "pillow>=10"]
 ollama = ["langchain-ollama>=0.2"]
 anthropic = ["langchain-anthropic>=0.3"]
 openai = ["langchain-openai>=0.2"]
+agent = ["langgraph>=0.2", "langchain-core>=0.3", "duckdb>=1.0", "scikit-learn>=1.6", "scipy>=1.11"]
+ui = ["gradio>=4"]
 # Later modules add their own extras as they are built:
 # vision = ["ultralytics>=8.2", "opencv-python-headless>=4.9"]
-# agent = ["langgraph>=0.2", "langchain-core>=0.2"]
 
 [project.scripts]
 cricket-ai = "cricket_ai.cli:app"
@@ -47,6 +48,8 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/cricket_ai/cli.py" = ["B008"]  # typer uses calls in defaults by design
+# SQL strings and question templates read better unwrapped
+"src/cricket_ai/agent/{tools,evaluate}.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

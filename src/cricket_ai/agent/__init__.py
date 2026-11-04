@@ -1,1 +1,1 @@
-"""Module 5: LangGraph agent orchestrating the analytics, model, vision and RAG tools. Planned."""
+"""Module 5: LangGraph agent that uses modules 1, 2 and 4 as tools."""

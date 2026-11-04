@@ -19,6 +19,8 @@ synth_app = typer.Typer(help="Module 2: synthetic data.", no_args_is_help=True)
 app.add_typer(synth_app, name="synth")
 rag_app = typer.Typer(help="Module 4: question answering (RAG + SQL).", no_args_is_help=True)
 app.add_typer(rag_app, name="rag")
+agent_app = typer.Typer(help="Module 5: LangGraph agent.", no_args_is_help=True)
+app.add_typer(agent_app, name="agent")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -440,6 +442,120 @@ def rag_images(
     index = ImageIndex.build(folder, ClipEmbedder(device=device))
     index.save(_rag_dir(dataset) / "images")
     typer.echo(f"Indexed {len(index.paths)} images -> {_rag_dir(dataset) / 'images'}")
+
+
+def _make_agent(dataset: str, llm: str | None, model: str | None, yes: bool, max_steps: int):
+    from cricket_ai.agent.graph import CricketAgent
+    from cricket_ai.agent.tools import CricketContext
+    from cricket_ai.llm import get_chat_model, llm_settings
+
+    provider, model_name = llm_settings(llm, model)
+    chat = get_chat_model(provider, model_name)
+    if chat is None:
+        typer.echo("The agent needs an LLM: add --llm ollama (or anthropic / openai).", err=True)
+        raise typer.Exit(code=1)
+    ctx = CricketContext.from_dataset(config.processed_dir(dataset), config.MODELS_DIR / dataset)
+
+    def approve(name: str, args: dict) -> bool:
+        return yes or typer.confirm(f"Agent wants to run {name}({args}). Allow?", default=True)
+
+    agent = CricketAgent(chat, ctx, max_steps=max_steps, approver=approve)
+    typer.echo(
+        f"[{provider}:{model_name}] tools: {', '.join(t.name for t in agent.tools)}", err=True
+    )
+    return agent, f"{provider}:{model_name}"
+
+
+@agent_app.command("ask")
+def agent_ask(
+    question: str = typer.Argument(...),
+    dataset: str = typer.Option("ipl"),
+    llm: str = typer.Option(None, help="ollama, anthropic or openai (or set CRICKET_AI_LLM)"),
+    model: str = typer.Option(None),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve expensive tools without asking"),
+    max_steps: int = typer.Option(6, help="Maximum tool rounds"),
+):
+    """Ask the agent one question; it chooses and calls the tools."""
+    from cricket_ai.agent.graph import write_trace
+
+    agent, _ = _make_agent(dataset, llm, model, yes, max_steps)
+    result = agent.ask(question)
+    typer.echo(f"\n{result.answer}\n")
+    for c in result.tool_calls:
+        typer.echo(f"  -> {c['name']}({c['args']})  {c['seconds']}s{'' if c['ok'] else '  ERROR'}")
+    trace = write_trace(result, config.REPORTS_DIR / dataset / "agent")
+    typer.echo(f"[{result.steps} tool rounds, {result.seconds}s; trace: {trace}]")
+
+
+@agent_app.command("chat")
+def agent_chat(
+    dataset: str = typer.Option("ipl"),
+    llm: str = typer.Option(None),
+    model: str = typer.Option(None),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+    max_steps: int = typer.Option(6),
+):
+    """Interactive chat in the terminal (each question is answered independently)."""
+    from cricket_ai.agent.graph import write_trace
+
+    agent, _ = _make_agent(dataset, llm, model, yes, max_steps)
+    typer.echo("Ask a question (empty line to quit).")
+    while True:
+        question = typer.prompt("you", default="", show_default=False).strip()
+        if not question:
+            break
+        result = agent.ask(question)
+        typer.echo(f"agent: {result.answer}\n  [tools: {', '.join(result.tools_used) or 'none'}]")
+        write_trace(result, config.REPORTS_DIR / dataset / "agent")
+
+
+@agent_app.command("evaluate")
+def agent_evaluate(
+    dataset: str = typer.Argument("ipl"),
+    llm: str = typer.Option(None),
+    model: str = typer.Option(None),
+    per_type: int = typer.Option(4, help="Tasks per type"),
+    max_steps: int = typer.Option(6),
+):
+    """Score tool choice and answers on tasks generated from the data."""
+    from cricket_ai.agent.evaluate import evaluate_agent, generate_tasks, write_report
+
+    agent, name = _make_agent(dataset, llm, model, True, max_steps)
+    tasks = generate_tasks(agent.ctx, per_type=per_type)
+    typer.echo(f"Running {len(tasks)} tasks ...")
+    results = evaluate_agent(agent, tasks)
+    out = config.REPORTS_DIR / dataset / "agent"
+    summary = write_report(results, out, name)
+    typer.echo(json.dumps(summary, indent=2))
+    typer.echo((out / "report.md").read_text())
+
+
+@agent_app.command("graph")
+def agent_graph(dataset: str = typer.Option("ipl")):
+    """Print the agent graph as Mermaid (paste into mermaid.live or a README)."""
+    from cricket_ai.agent.graph import CricketAgent
+    from cricket_ai.agent.tools import CricketContext
+
+    class _NoLLM:
+        def bind_tools(self, tools):
+            return self
+
+    ctx = CricketContext.from_dataset(config.processed_dir(dataset), config.MODELS_DIR / dataset)
+    typer.echo(CricketAgent(_NoLLM(), ctx).mermaid())
+
+
+@agent_app.command("ui")
+def agent_ui(
+    dataset: str = typer.Option("ipl"),
+    llm: str = typer.Option(None),
+    model: str = typer.Option(None),
+    port: int = typer.Option(7860),
+):
+    """Chat with the agent in the browser (pip install gradio)."""
+    from cricket_ai.agent.ui import launch
+
+    agent, _ = _make_agent(dataset, llm, model, True, 6)
+    launch(agent, port=port)
 
 
 @app.command("version")
