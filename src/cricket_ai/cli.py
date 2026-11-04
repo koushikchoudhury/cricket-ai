@@ -17,6 +17,8 @@ winprob_app = typer.Typer(help="Module 1: win-probability model.", no_args_is_he
 app.add_typer(winprob_app, name="winprob")
 synth_app = typer.Typer(help="Module 2: synthetic data.", no_args_is_help=True)
 app.add_typer(synth_app, name="synth")
+rag_app = typer.Typer(help="Module 4: question answering (RAG + SQL).", no_args_is_help=True)
+app.add_typer(rag_app, name="rag")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -307,6 +309,137 @@ def synth_evaluate(dataset: str = typer.Argument("ipl")):
     table = pd.DataFrame(result["summary"]).set_index("model")
     typer.echo(table.reindex(columns=cols).to_markdown())
     typer.echo(f"Report: {out / 'report.md'}")
+
+
+def _rag_dir(dataset: str):
+    return config.processed_dir(dataset) / "rag"
+
+
+def _load_rag(dataset: str, llm: str | None, model: str | None, k: int, device: str | None):
+    from cricket_ai.llm import get_chat_model
+    from cricket_ai.rag.pipeline import CricketRAG
+    from cricket_ai.rag.retrieval import HybridRetriever
+    from cricket_ai.rag.sql import CricketSQL
+
+    index = _rag_dir(dataset)
+    if not (index / "index.json").exists():
+        typer.echo(f"No index in {index}. Run `cricket-ai rag index {dataset}` first.", err=True)
+        raise typer.Exit(code=1)
+    retriever = HybridRetriever.load(index, device=device)
+    sql = CricketSQL.from_dir(config.processed_dir(dataset))
+    return CricketRAG(retriever, sql, get_chat_model(llm, model), k=k)
+
+
+@rag_app.command("index")
+def rag_index(
+    dataset: str = typer.Argument("ipl"),
+    embedder: str = typer.Option(
+        "hashing", help="hashing (no download) or st (sentence-transformers)"
+    ),
+    model: str = typer.Option(None, help="Embedding model, default BAAI/bge-small-en-v1.5"),
+    device: str = typer.Option("auto", help="auto, cuda or cpu (sentence-transformers only)"),
+):
+    """Build the document corpus and search index (data/processed/<dataset>/rag/)."""
+    import time
+    from collections import Counter
+
+    from cricket_ai.data.build import load_tables
+    from cricket_ai.rag.corpus import build_corpus
+    from cricket_ai.rag.retrieval import HybridRetriever, make_embedder
+
+    matches, deliveries, _ = load_tables(config.processed_dir(dataset))
+    t0 = time.perf_counter()
+    docs = build_corpus(matches, deliveries)
+    typer.echo(f"{len(docs)} documents: {dict(Counter(d.kind for d in docs))}")
+    retriever = HybridRetriever(docs, make_embedder(embedder, model, device))
+    retriever.save(_rag_dir(dataset))
+    typer.echo(f"Indexed in {time.perf_counter() - t0:.0f}s -> {_rag_dir(dataset)}")
+
+
+@rag_app.command("ask")
+def rag_ask(
+    question: str = typer.Argument(..., help="Your question, in quotes"),
+    dataset: str = typer.Option("ipl"),
+    llm: str = typer.Option(None, help="none, ollama, anthropic or openai (or set CRICKET_AI_LLM)"),
+    model: str = typer.Option(None, help="Model name for the provider"),
+    route: str = typer.Option("auto", help="auto, sql or search"),
+    k: int = typer.Option(5, help="Documents to retrieve"),
+    device: str = typer.Option(None),
+):
+    """Answer a question with retrieved sources, using SQL for numbers."""
+    rag = _load_rag(dataset, llm, model, k, device)
+    a = rag.ask(question, route=None if route == "auto" else route)
+    typer.echo(f"\n{a.text}\n")
+    if a.sql:
+        typer.echo(f"SQL ({'failed: ' + a.error if a.error else 'ok'}):\n{a.sql}\n")
+    typer.echo("Sources:")
+    for s in a.sources:
+        typer.echo(f"  [{s['n']}] {s['title']}  ({s['doc_id']})")
+    images = _rag_dir(dataset) / "images"
+    if (images / "images.json").exists():
+        from cricket_ai.rag.images import ClipEmbedder, ImageIndex
+
+        typer.echo("Related images:")
+        for h in ImageIndex.load(images, ClipEmbedder()).search(question, 3):
+            typer.echo(f"  {h.path}  {h.caption}  ({h.score:.2f})")
+    typer.echo(f"[route={a.route}, {a.seconds}s]")
+
+
+@rag_app.command("evaluate")
+def rag_evaluate(
+    dataset: str = typer.Argument("ipl"),
+    per_type: int = typer.Option(20, help="Questions per type (5 types)"),
+    llm: str = typer.Option(None, help="Also score written answers with this LLM"),
+    model: str = typer.Option(None),
+    answers: int = typer.Option(0, help="How many questions to answer with the LLM (0 = all)"),
+    device: str = typer.Option(None),
+):
+    """Score retrieval (and, with --llm, answers) on generated questions with known answers."""
+    from cricket_ai.llm import llm_settings
+    from cricket_ai.rag.evaluate import (
+        evaluate_answers,
+        evaluate_retrieval,
+        generate_questions,
+        summarise_retrieval,
+        write_report,
+    )
+
+    provider, model_name = llm_settings(llm, model)
+    rag = _load_rag(dataset, provider, model_name, 5, device)
+    questions = generate_questions(rag.retriever.docs, per_type=per_type)
+    overall, by_type = summarise_retrieval(evaluate_retrieval(rag.retriever, questions))
+    typer.echo(f"{len(questions)} questions\n\nRetrieval:\n{overall.to_markdown()}\n")
+    typer.echo(f"Recall@5 by type:\n{by_type.to_markdown()}\n")
+    answered = None
+    if rag.llm is not None:
+        subset = questions[:answers] if answers else questions
+        typer.echo(f"Answering {len(subset)} questions with {provider}:{model_name} ...")
+        answered = evaluate_answers(rag, subset)
+        typer.echo(f"Answer accuracy: {answered.correct.mean():.1%}")
+        typer.echo(answered.groupby("type").correct.mean().round(3).to_markdown())
+    out = config.REPORTS_DIR / dataset / "rag"
+    meta = {
+        "n_questions": len(questions),
+        "n_docs": len(rag.retriever.docs),
+        "embedder": rag.retriever.embedder.config(),
+        "llm": f"{provider}:{model_name}" if rag.llm is not None else None,
+    }
+    write_report(out, overall, by_type, answered, meta)
+    typer.echo(f"Report: {out / 'report.md'}")
+
+
+@rag_app.command("images")
+def rag_images(
+    folder: Path = typer.Argument(..., help="Folder of images (optional captions.json inside)"),
+    dataset: str = typer.Option("ipl"),
+    device: str = typer.Option(None),
+):
+    """Index images with CLIP so `rag ask` also returns related pictures."""
+    from cricket_ai.rag.images import ClipEmbedder, ImageIndex
+
+    index = ImageIndex.build(folder, ClipEmbedder(device=device))
+    index.save(_rag_dir(dataset) / "images")
+    typer.echo(f"Indexed {len(index.paths)} images -> {_rag_dir(dataset) / 'images'}")
 
 
 @app.command("version")

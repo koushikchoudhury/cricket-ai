@@ -15,7 +15,7 @@ building blocks around them.
 | 1 | Data pipeline, analytics, win probability | Data engineering, validation, tabular modelling, calibration | 🟡 Pipeline and model code done |
 | 2 | Synthetic data (GAN, CTGAN) | Generative modelling, fidelity / utility / privacy evaluation | ✅ GAN beats CTGAN library on 4 of 5 metrics |
 | 3 | Video and image analysis | YOLO detection, ball tracking, pose-based shot classification | ⚪ Planned |
-| 4 | Multimodal RAG | Retrieval over scorecards, commentary, images and clips, with evals | ⚪ Planned |
+| 4 | Multimodal RAG | Hybrid retrieval, SQL for numbers, citations, image search, evals | 🟡 Code done, IPL run next |
 | 5 | LangGraph agent | Tool orchestration across modules 1–4 | ⚪ Planned |
 | 6 | Docker, Kubernetes, AWS | kind locally, short EKS deployment, S3/ECR | 🟡 Data image done |
 
@@ -100,6 +100,24 @@ The evaluation answers four questions about each synthetic table:
 | Is it useful? | Train on synthetic, test on real: runs-in-over MAE and wicket AUC vs training on real |
 | Does it leak the training data? | Distance to closest record vs real holdout, membership-inference AUC |
 
+## Module 4: question answering (RAG + SQL)
+
+```bash
+pip install -e ".[rag,embeddings,ollama]"      # or anthropic / openai instead of ollama
+cricket-ai rag index ipl --embedder st          # corpus + bge-small embeddings (GPU if present)
+cricket-ai rag ask "Who was player of the match in the 2016 final?" --llm ollama
+cricket-ai rag ask "How many runs did Kohli score in 2016?" --llm ollama   # goes to SQL
+cricket-ai rag evaluate ipl --llm ollama        # retrieval + answer accuracy
+```
+
+- **Corpus:** match reports, innings phases and player seasons, built from the tables.
+- **Search:** hand-written BM25 fused with embedding search (reciprocal rank fusion).
+- **Numbers:** "how many / most / average" questions are answered by SQL the LLM writes and
+  DuckDB runs in a locked-down, read-only database. Text answers cite their sources.
+- **Evaluation:** questions are generated from the data, so each has a known answer and a
+  known source document: recall@k and MRR for retrieval, accuracy for answers.
+- **LLM:** `--llm none|ollama|anthropic|openai`. With `none`, you get the retrieved sources.
+
 ## Repository layout
 
 ```
@@ -109,7 +127,7 @@ src/cricket_ai/
   winprob/     module 1 model (next)
   synthetic/   module 2: table, encoder, sampler, GAN, baselines, evaluation
   vision/      module 3
-  rag/         module 4
+  rag/         module 4: corpus, retrieval, SQL, pipeline, images, evaluation
   agent/       module 5
   cli.py       `cricket-ai` command
 docker/        one Dockerfile per module

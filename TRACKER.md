@@ -7,7 +7,7 @@ Status: ✅ done · 🟡 in progress · ⚪ not started. Update this file in the
 | 1. Data, analytics, win probability | 🟡 | Train on real IPL data and review the report; first-innings model |
 | 2. Synthetic data | ✅ | Optional: improve wicket utility; innings-level sequence generator |
 | 3. Video and image analysis | ⚪ | Source and label a small broadcast-frame dataset |
-| 4. Multimodal RAG | ⚪ | Build the scorecard and commentary corpus |
+| 4. Multimodal RAG | 🟡 | Index IPL with a real embedding model; run the eval with an LLM |
 | 5. LangGraph agent | ⚪ | Wrap modules 1–4 as tools |
 | 6. Docker, Kubernetes, AWS | 🟡 | kind cluster running the data job |
 
@@ -167,15 +167,21 @@ output video.
 **Deliverables:** a retrieval service answering questions over scorecards, commentary, images
 and clips, with an evaluation set and scores.
 
-- [ ] Corpus: scorecards from module 1 tables, commentary text, frames and clip captions from module 3
-- [ ] Chunking and metadata (match, innings, over, players) for filtered retrieval
-- [ ] Text embeddings (Hugging Face) and image embeddings (CLIP / SigLIP)
-- [ ] Vector store (Qdrant or pgvector) with hybrid search (BM25 + dense) and a reranker
-- [ ] Structured route: questions with numbers go to SQL over the Parquet tables
-- [ ] Generation with citations to source chunks
-- [ ] Eval set of ~100 questions with answers and source ids
-- [ ] Metrics: recall@k, MRR, faithfulness and answer correctness (Ragas or LLM-judge with spot checks)
-- [ ] FastAPI service
+- [x] Corpus from module 1 tables: match reports, innings-phase summaries, player-season summaries
+- [x] Metadata on every document (match, season, teams, phase, player) and kind filters
+- [x] Hand-written BM25 + embeddings (hashing for CI; sentence-transformers, default bge-small)
+- [x] Hybrid search with reciprocal rank fusion; date tokens for exact-date matching
+- [x] Structured route: number questions go to LLM-written SQL on DuckDB (read-only, file access off)
+- [x] Generation with numbered citations; one retry when the SQL fails
+- [x] LLM switch: none / Ollama / Anthropic / OpenAI (`--llm`, `CRICKET_AI_LLM`)
+- [x] Image search with CLIP (`cricket-ai rag images <folder>`), ready for frames from module 3
+- [x] Eval set generated from the tables: 5 question types with known answers and source ids
+- [x] Metrics: recall@1/5/10 and MRR for BM25, dense and hybrid; answer accuracy with an LLM
+- [ ] Index IPL with bge-small on the GPU and record retrieval results
+- [ ] Run the answer evaluation with an LLM and record accuracy by route
+- [ ] Commentary text (Cricsheet has none; needs another source)
+- [ ] Reranker (cross-encoder) and an LLM-judge for faithfulness
+- [ ] FastAPI service (module 6)
 
 ## 5. LangGraph agent
 
@@ -214,3 +220,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: Run 2 mixed (better calibration, worse discrimination); added ablation command.
 - 2026-11-04: Module 2 built: over-level table, hand-written GAN, baselines, full evaluation.
 - 2026-11-04: Module 2 run on IPL: hand-written GAN beats the CTGAN library on 4 of 5 quality metrics.
+- 2026-11-04: Module 4 built: corpus, hybrid search, SQL route, LLM switch, image search, evaluation.

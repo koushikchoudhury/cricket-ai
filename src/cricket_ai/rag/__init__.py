@@ -1,1 +1,1 @@
-"""Module 4: multimodal RAG over scorecards, commentary, images and clips. Planned."""
+"""Module 4: retrieval-augmented question answering over scorecards, stats and images."""
