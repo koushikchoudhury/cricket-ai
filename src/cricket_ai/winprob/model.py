@@ -18,7 +18,13 @@ import pandas as pd
 import torch
 from torch import nn
 
-from cricket_ai.winprob.data import FEATURES, LABEL, feature_matrix, recency_weights
+from cricket_ai.winprob.data import (
+    ALL_FEATURES,
+    FEATURES,
+    LABEL,
+    feature_matrix,
+    recency_weights,
+)
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +42,7 @@ class TrainConfig:
     device: str = "auto"
     # Weight halves every N seasons back; None/0 = equal weights.
     recency_half_life: float | None = 4.0
+    features: tuple[str, ...] = tuple(FEATURES)
 
 
 @dataclass
@@ -77,8 +84,15 @@ class Standardizer(nn.Module):
 class WinProbMLP(nn.Module):
     """Standardise -> [Linear -> LayerNorm -> GELU -> Dropout] x N -> Linear -> logit / T."""
 
-    def __init__(self, n_features: int, hidden: tuple[int, ...] = (64, 64, 32), dropout=0.1):
+    def __init__(
+        self,
+        features: list[str],
+        hidden: tuple[int, ...] = (64, 64, 32),
+        dropout: float = 0.1,
+    ):
         super().__init__()
+        self.features = list(features)
+        n_features = len(self.features)
         self.scaler = Standardizer(n_features)
         layers: list[nn.Module] = []
         d = n_features
@@ -107,8 +121,10 @@ class WinProbMLP(nn.Module):
         return self.logits(x) * self.calib_scale + self.calib_bias
 
 
-def _to_tensors(df: pd.DataFrame, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
-    x = torch.from_numpy(feature_matrix(df)).to(device)
+def _to_tensors(
+    df: pd.DataFrame, device: torch.device, features: list[str]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    x = torch.from_numpy(feature_matrix(df, features)).to(device)
     y = torch.from_numpy(df[LABEL].to_numpy(dtype=np.float32)).to(device)
     return x, y
 
@@ -130,11 +146,12 @@ def train_mlp(
     np.random.seed(cfg.seed)
     device = resolve_device(cfg.device)
 
-    x_tr, y_tr = _to_tensors(train, device)
-    x_va, y_va = _to_tensors(val, device)
+    features = list(cfg.features)
+    x_tr, y_tr = _to_tensors(train, device, features)
+    x_va, y_va = _to_tensors(val, device, features)
     w_tr = torch.from_numpy(recency_weights(train, cfg.recency_half_life)).to(device)
 
-    model = WinProbMLP(len(FEATURES), cfg.hidden, cfg.dropout).to(device)
+    model = WinProbMLP(features, cfg.hidden, cfg.dropout).to(device)
     model.scaler.fit(x_tr)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     steps_per_epoch = math.ceil(len(x_tr) / cfg.batch_size)
@@ -192,8 +209,8 @@ def calibrate(model: WinProbMLP, x_val: torch.Tensor, y_val: torch.Tensor) -> tu
         return loss
 
     opt.step(closure)
-    a_val = float(log_a.exp().clamp(0.25, 4.0))
-    b_val = float(b.clamp(-3.0, 3.0))
+    a_val = float(log_a.detach().exp().clamp(0.25, 4.0))
+    b_val = float(b.detach().clamp(-3.0, 3.0))
     model.calib_scale.fill_(a_val)
     model.calib_bias.fill_(b_val)
     return a_val, b_val
@@ -203,7 +220,7 @@ def calibrate(model: WinProbMLP, x_val: torch.Tensor, y_val: torch.Tensor) -> tu
 def predict_proba(model: WinProbMLP, df: pd.DataFrame, bs: int = 8192) -> np.ndarray:
     model.eval()
     device = next(model.parameters()).device
-    x = torch.from_numpy(feature_matrix(df)).to(device)
+    x = torch.from_numpy(feature_matrix(df, model.features)).to(device)
     out = [torch.sigmoid(model(x[i : i + bs])).cpu() for i in range(0, len(x), bs)]
     return torch.cat(out).numpy() if out else np.empty(0, dtype=np.float32)
 
@@ -214,7 +231,7 @@ def save(model: WinProbMLP, cfg: TrainConfig, hist: TrainHistory, path: Path) ->
         {
             "state_dict": model.state_dict(),
             "config": asdict(cfg),
-            "features": FEATURES,
+            "features": model.features,
             "history": asdict(hist),
         },
         path,
@@ -223,9 +240,10 @@ def save(model: WinProbMLP, cfg: TrainConfig, hist: TrainHistory, path: Path) ->
 
 def load(path: Path, device: str = "cpu") -> WinProbMLP:
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    if ckpt["features"] != FEATURES:
-        raise ValueError("Checkpoint was trained on a different feature set")
+    unknown = set(ckpt["features"]) - set(ALL_FEATURES)
+    if unknown:
+        raise ValueError(f"Checkpoint uses unknown features: {sorted(unknown)}")
     cfg = ckpt["config"]
-    model = WinProbMLP(len(FEATURES), tuple(cfg["hidden"]), cfg["dropout"])
+    model = WinProbMLP(ckpt["features"], tuple(cfg["hidden"]), cfg["dropout"])
     model.load_state_dict(ckpt["state_dict"])
     return model.to(device).eval()

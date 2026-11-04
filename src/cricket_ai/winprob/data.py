@@ -20,7 +20,18 @@ BASE_FEATURES = [
     "target_vs_par",
 ]
 DERIVED_FEATURES = ["rate_gap", "runs_per_wicket_needed", "frac_balls_left"]
-FEATURES = BASE_FEATURES + DERIVED_FEATURES
+ALL_FEATURES = BASE_FEATURES + DERIVED_FEATURES
+ERA_FEATURES = ["par_score", "target_vs_par"]
+
+# Feature sets compared in the ablation (cricket-ai winprob ablate).
+FEATURE_SETS = {
+    "core": [f for f in ALL_FEATURES if f not in ERA_FEATURES],
+    "core+target_vs_par": [f for f in ALL_FEATURES if f != "par_score"],
+    "core+par+target_vs_par": list(ALL_FEATURES),
+}
+# Default: the raw par score is left out. It is near-constant within a season, so it acts
+# as an era label, and recent seasons sit outside its training range (see TRACKER run 2).
+FEATURES = FEATURE_SETS["core+target_vs_par"]
 
 # Direction each feature should push win probability (+1 up, -1 down, 0 free).
 # Used as monotonic constraints for gradient boosting and as sanity checks for the MLP.
@@ -65,10 +76,10 @@ def recency_weights(df: pd.DataFrame, half_life: float | None) -> np.ndarray:
     return (w / w.mean()).astype(np.float32)
 
 
-def feature_matrix(df: pd.DataFrame) -> np.ndarray:
+def feature_matrix(df: pd.DataFrame, features: list[str] | None = None) -> np.ndarray:
     if not set(DERIVED_FEATURES).issubset(df.columns):
         df = add_derived(df)
-    return df[FEATURES].to_numpy(dtype=np.float32)
+    return df[list(features or FEATURES)].to_numpy(dtype=np.float32)
 
 
 @dataclass

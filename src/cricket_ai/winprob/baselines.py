@@ -24,7 +24,8 @@ class BaseRate:
         return np.column_stack([1 - p, p])
 
 
-def make_baselines(seed: int = 42) -> dict[str, object]:
+def make_baselines(seed: int = 42, features: list[str] | None = None) -> dict[str, object]:
+    features = list(features or FEATURES)
     return {
         "base_rate": BaseRate(),
         "logistic": make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, C=1.0)),
@@ -34,7 +35,7 @@ def make_baselines(seed: int = 42) -> dict[str, object]:
             max_leaf_nodes=31,
             min_samples_leaf=100,
             l2_regularization=1.0,
-            monotonic_cst=[MONOTONIC[f] for f in FEATURES],
+            monotonic_cst=[MONOTONIC[f] for f in features],
             # Early stopping uses the season-based validation split passed to fit(), not a
             # random row sample: rows from one match are correlated, so a random holdout leaks.
             early_stopping=True,
@@ -49,12 +50,18 @@ def fit_baselines(
     val: pd.DataFrame,
     seed: int = 42,
     half_life: float | None = None,
+    features: list[str] | None = None,
+    only: list[str] | None = None,
 ) -> dict[str, object]:
-    X, y = feature_matrix(train), train[LABEL].to_numpy()
-    X_val, y_val = feature_matrix(val), val[LABEL].to_numpy()
+    features = list(features or FEATURES)
+    X, y = feature_matrix(train, features), train[LABEL].to_numpy()
+    X_val, y_val = feature_matrix(val, features), val[LABEL].to_numpy()
     w = recency_weights(train, half_life)
-    models = make_baselines(seed)
+    models = make_baselines(seed, features)
+    if only:
+        models = {k: v for k, v in models.items() if k in only}
     for name, model in models.items():
+        model.features_ = features
         if name == "gbm_monotone":
             model.fit(X, y, sample_weight=w, X_val=X_val, y_val=y_val)
         elif name == "logistic":
@@ -65,4 +72,4 @@ def fit_baselines(
 
 
 def predict(model: object, df: pd.DataFrame) -> np.ndarray:
-    return model.predict_proba(feature_matrix(df))[:, 1]
+    return model.predict_proba(feature_matrix(df, getattr(model, "features_", None)))[:, 1]
