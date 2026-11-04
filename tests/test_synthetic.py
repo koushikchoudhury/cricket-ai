@@ -136,8 +136,6 @@ def test_evaluate_all_with_marginals(split, tmp_path):
         assert (tmp_path / f).exists()
 
 
-
-
 def test_gan_trains_samples_and_reloads(split, tmp_path):
     pytest.importorskip("torch")
     from cricket_ai.synthetic.gan import GANConfig, TabularGAN
