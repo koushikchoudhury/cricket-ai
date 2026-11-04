@@ -129,6 +129,34 @@ def winprob_train(
     typer.echo(f"Report: {config.REPORTS_DIR / dataset / 'winprob' / 'report.md'}")
 
 
+@winprob_app.command("ablate")
+def winprob_ablate(
+    dataset: str = typer.Argument("ipl"),
+    max_epochs: int = typer.Option(60),
+    device: str = typer.Option("auto"),
+    test_seasons: int = typer.Option(2),
+):
+    """Compare feature sets and recency weighting (6 variants, logistic + MLP each)."""
+    import pandas as pd
+
+    from cricket_ai.winprob.data import date_split, season_split
+    from cricket_ai.winprob.evaluate import run_ablation
+    from cricket_ai.winprob.model import TrainConfig
+
+    states = pd.read_parquet(config.processed_dir(dataset) / "chase_states.parquet")
+    try:
+        split = season_split(states, test_seasons=test_seasons)
+    except ValueError:
+        split = date_split(states)
+    out = config.REPORTS_DIR / dataset / "winprob"
+    table = run_ablation(
+        states, out, TrainConfig(max_epochs=max_epochs, device=device), split=split
+    )
+    typer.echo(f"Split: {split.description}")
+    typer.echo(table.to_markdown(index=False))
+    typer.echo(f"Saved: {out / 'ablation.md'}")
+
+
 @winprob_app.command("curve")
 def winprob_curve(
     match_id: str = typer.Argument(

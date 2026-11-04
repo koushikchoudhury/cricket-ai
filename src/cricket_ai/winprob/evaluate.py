@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import joblib
@@ -17,7 +17,7 @@ import pandas as pd  # noqa: E402
 
 from cricket_ai.winprob import model as mlp  # noqa: E402
 from cricket_ai.winprob.baselines import fit_baselines, predict  # noqa: E402
-from cricket_ai.winprob.data import LABEL, Split, auto_split  # noqa: E402
+from cricket_ai.winprob.data import FEATURE_SETS, LABEL, Split, auto_split  # noqa: E402
 from cricket_ai.winprob.metrics import (  # noqa: E402
     all_metrics,
     metrics_by_stage,
@@ -42,7 +42,11 @@ def run_experiment(
     log.info("Split: %s %s", split.description, split.sizes())
 
     baselines = fit_baselines(
-        split.train, split.val, seed=cfg.seed, half_life=cfg.recency_half_life
+        split.train,
+        split.val,
+        seed=cfg.seed,
+        half_life=cfg.recency_half_life,
+        features=list(cfg.features),
     )
     net, hist = mlp.train_mlp(split.train, split.val, cfg)
     mlp.save(net, cfg, hist, model_dir / "winprob_mlp.pt")
@@ -74,6 +78,69 @@ def run_experiment(
     (report_dir / "metrics.json").write_text(json.dumps(result, indent=2, default=str))
     (report_dir / "report.md").write_text(_markdown(result, table, stages))
     return result
+
+
+ABLATION_VARIANTS: list[tuple[str, float | None]] = [
+    ("core", None),
+    ("core+target_vs_par", None),
+    ("core+par+target_vs_par", None),
+    ("core", 4.0),
+    ("core+target_vs_par", 4.0),
+    ("core+par+target_vs_par", 4.0),
+]
+
+
+def run_ablation(
+    states: pd.DataFrame,
+    report_dir: Path,
+    cfg: mlp.TrainConfig | None = None,
+    split: Split | None = None,
+    variants: list[tuple[str, float | None]] | None = None,
+) -> pd.DataFrame:
+    """Train logistic regression and the MLP for each feature set x recency setting.
+
+    Every variant uses the same split and Platt calibration, so differences come from
+    the feature set and the weighting alone.
+    """
+    base = cfg or mlp.TrainConfig()
+    split = split or auto_split(states)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    y_test = split.test[LABEL].to_numpy()
+    rows = []
+    for feature_set, half_life in variants or ABLATION_VARIANTS:
+        features = FEATURE_SETS[feature_set]
+        log.info("Ablation: features=%s half_life=%s", feature_set, half_life)
+        cfg_v = replace(base, features=tuple(features), recency_half_life=half_life)
+        net, hist = mlp.train_mlp(split.train, split.val, cfg_v)
+        logistic = fit_baselines(
+            split.train,
+            split.val,
+            seed=base.seed,
+            half_life=half_life,
+            features=features,
+            only=["logistic"],
+        )["logistic"]
+        p_mlp = mlp.predict_proba(net, split.test)
+        stages = metrics_by_stage(split.test, p_mlp).set_index("stage")
+        variant = {"features": feature_set, "recency": half_life or "off"}
+        for name, p in (("mlp", p_mlp), ("logistic", predict(logistic, split.test))):
+            rows.append({**variant, "model": name, **all_metrics(y_test, p)})
+        rows[-2].update(
+            {
+                "early_ece": stages.loc["early", "ece"] if "early" in stages.index else None,
+                "best_epoch": hist.best_epoch,
+                "best_val_loss": round(min(hist.val_loss), 4),
+            }
+        )
+    table = pd.DataFrame(rows)
+    table.to_csv(report_dir / "ablation.csv", index=False)
+    md = (
+        "# Win-probability ablation\n\n"
+        f"**Split:** {split.description}. Test metrics; all variants use Platt calibration.\n\n"
+        f"{table.to_markdown(index=False)}\n"
+    )
+    (report_dir / "ablation.md").write_text(md)
+    return table
 
 
 def _plot_reliability(y: np.ndarray, preds: dict[str, np.ndarray], path: Path) -> None:

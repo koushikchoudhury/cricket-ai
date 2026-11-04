@@ -36,7 +36,9 @@ model with an evaluation write-up, and a win-probability curve for any match.
 - [x] Evaluation code for held-out seasons vs baselines, including metrics by chase stage
 - [x] Run 1 on real IPL data (results below): era drift found
 - [x] Era fixes: par score from earlier matches, recency weighting, Platt calibration
-- [ ] Run 2 with the era fixes; ablation with `--half-life 0`
+- [x] Run 2 with the era fixes: calibration better, discrimination worse (below)
+- [x] Configurable feature sets; `cricket-ai winprob ablate` (6 variants)
+- [ ] Run the ablation and pick the final configuration
 - [x] Win-probability curve plot and "key moments" (largest swings) per match
 - [ ] Notebook: EDA and model report
 - [ ] Model card
@@ -61,6 +63,24 @@ Findings:
 - **Era drift.** Every model under-predicts the chasing side on 2025–26 (reliability curves sit above the diagonal), worst early in the chase, when difficulty depends on the scoring environment. Consistent with higher scoring after the 2023 Impact Player rule.
 - Gradient boosting suffers most: trees cannot extrapolate to targets above the training range.
 - Temperature scaling (0.93) cannot correct a shift, only sharpen or soften.
+
+**Run 2** (2026-11-04): + par_score, target_vs_par, recency half-life 4, Platt calibration.
+
+| model | log loss | Brier | ECE | AUC |
+|---|---|---|---|---|
+| MLP (PyTorch) | **0.414** | **0.132** | 0.048 | 0.894 |
+| Logistic | 0.425 | 0.139 | 0.122 | **0.914** |
+| GBM, monotone | 0.575 | 0.203 | 0.228 | 0.910 |
+| Base rate | 0.690 | 0.249 | 0.045 | 0.500 |
+
+Findings:
+- Platt calibration worked: MLP ECE 0.085 → 0.048.
+- But log loss and AUC got worse for every model, so a feature change hurt the model itself.
+- MLP validation loss was best after epoch 1 and then rose (0.448 → 0.551) while training loss fell:
+  the model learned something that does not transfer to the next season.
+- Hypothesis: raw `par_score` is near-constant within a season, so it acts as an era label, and
+  2024–26 values lie outside the training range. `target_vs_par` should carry the useful signal.
+  The ablation tests this; the default feature set now leaves raw `par_score` out.
 
 ## 2. Synthetic data (GAN, CTGAN)
 
@@ -144,3 +164,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: Scaffold, data pipeline, analytics, chase-state features, tests, data Dockerfile, CI.
 - 2026-11-04: Pipeline verified on real IPL data. Win-probability baselines, PyTorch MLP, calibration, evaluation and curves (PR #1).
 - 2026-11-04: Run 1 found era drift; added par score, recency weighting and Platt calibration.
+- 2026-11-04: Run 2 mixed (better calibration, worse discrimination); added ablation command.

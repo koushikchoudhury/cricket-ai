@@ -49,6 +49,7 @@ def test_date_split_and_derived(tables):
     _, _, states = tables
     split = date_split(states)
     assert set(FEATURES).issubset(split.train.columns)
+    assert "par_score" not in FEATURES and "target_vs_par" in FEATURES
     assert split.train.start_date.max() <= split.test.start_date.min()
     d = add_derived(states.head(50))
     assert np.allclose(d.rate_gap, d.required_run_rate - d.current_run_rate)
@@ -139,3 +140,33 @@ def test_platt_calibration_fixes_a_shift(tables):
     y_shift = torch.where(flip, torch.ones_like(y), y)
     _, bias = mlp.calibrate(model, x, y_shift)
     assert bias > 0  # calibration shifts probabilities up, which temperature alone cannot do
+
+
+def test_ablation_and_feature_sets(tables, tmp_path):
+    from cricket_ai.winprob.evaluate import run_ablation
+
+    _, _, states = tables
+    split = season_split(states, test_seasons=1, val_seasons=1)
+    cfg = mlp.TrainConfig(max_epochs=2, device="cpu")
+    table = run_ablation(
+        states,
+        tmp_path,
+        cfg,
+        split=split,
+        variants=[("core", None), ("core+par+target_vs_par", 2.0)],
+    )
+    assert len(table) == 4 and set(table.model) == {"mlp", "logistic"}
+    assert (tmp_path / "ablation.md").exists()
+
+
+def test_checkpoint_keeps_its_feature_set(tables, tmp_path):
+    from cricket_ai.winprob.data import FEATURE_SETS
+
+    _, _, states = tables
+    split = date_split(states)
+    cfg = mlp.TrainConfig(max_epochs=2, device="cpu", features=tuple(FEATURE_SETS["core"]))
+    model, hist = mlp.train_mlp(split.train, split.val, cfg)
+    mlp.save(model, cfg, hist, tmp_path / "core.pt")
+    loaded = mlp.load(tmp_path / "core.pt")
+    assert loaded.features == FEATURE_SETS["core"]
+    assert np.allclose(mlp.predict_proba(model, split.test), mlp.predict_proba(loaded, split.test))
