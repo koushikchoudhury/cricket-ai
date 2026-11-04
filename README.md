@@ -13,7 +13,7 @@ building blocks around them.
 | # | Module | What it shows | Status |
 |---|--------|---------------|--------|
 | 1 | Data pipeline, analytics, win probability | Data engineering, validation, tabular modelling, calibration | 🟡 Pipeline and model code done |
-| 2 | Synthetic data (GAN, CTGAN) | Generative modelling, fidelity / utility / privacy evaluation | 🟡 Code done, IPL run next |
+| 2 | Synthetic data (GAN, CTGAN) | Generative modelling, fidelity / utility / privacy evaluation | ✅ GAN beats CTGAN library on 4 of 5 metrics |
 | 3 | Video and image analysis | YOLO detection, ball tracking, pose-based shot classification | ⚪ Planned |
 | 4 | Multimodal RAG | Retrieval over scorecards, commentary, images and clips, with evals | ⚪ Planned |
 | 5 | LangGraph agent | Tool orchestration across modules 1–4 | ⚪ Planned |
