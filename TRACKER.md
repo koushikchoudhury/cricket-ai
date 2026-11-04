@@ -203,7 +203,12 @@ traces and an evaluation.
 - [x] Tests with a scripted fake model: tool use, error recovery, step limit, approval, scoring
 - [x] Run 1 with Ollama qwen2.5:3b (17 tasks): tool choice 100%, answers 71%; exposed eval and tool flaws (below)
 - [x] Fixes: leaderboard tool, labelled batting/bowling output, tolerant season args, numeric faithfulness
-- [ ] Run 2 with the fixes and record results
+- [x] Run 2 with the fixes (below): 15/17 scored correct, but 2 chase answers were wrong yet passed
+- [x] Fixes: win_probability takes overs; chase tasks scored against ground truth and expected arguments;
+      tool arguments in results.csv; surname fallback for names; leaderboard leads with the leader
+- [x] Variance check: three identical runs (same model, code, tasks) scored 88%, 82% and 100%
+      (season_runs 0.75 / 0.50 / 1.00). Added `--repeats N`: mean, range across runs, per-task consistency
+- [ ] Run 3 with `--repeats 5` and record mean and range
 - [ ] Vision tool once module 3 exists
 
 ### Run 1 (2026-11-04, Ollama qwen2.5:3b on GTX 1650)
@@ -227,6 +232,22 @@ traces and an evaluation.
   and "2020" matches "2020/21".
 - **Wording**: the 3B model described a bowler's runs conceded as "runs in bowling". player_stats
   now returns labelled sentences (BATTING: scored ... / BOWLING: conceded ...; "did not bowl").
+
+### Run 2 (2026-11-04, same model, after the fixes)
+
+Scored 15/17 correct (run 1: 12/17); tool choice 17/17; top_scorer 0/4 -> 3/4 with the new
+leaderboard tool. Reading the answers showed the score was still too high:
+
+- **chase, 2 of 4 wrong but scored correct.** The model called win_probability with
+  runs_scored=60 for "100/2" (30.3% instead of ~84%), and with balls_bowled=18 for "18 overs"
+  ("10 off 102 balls"). The answers faithfully repeated the wrong tool output, so the
+  faithfulness check passed them. Lesson: faithfulness to evidence does not catch wrong
+  tool *inputs*. Fixes: the tool now takes overs as people say them, rejects ball counts,
+  and chase tasks are scored against the true probability and the expected arguments.
+- **season_runs, DA Warner 2019**: "no player named DA Warner", most likely the model expanded
+  the name. Names now fall back to the surname, and results.csv records tool arguments.
+- **top_scorer 2021**: the leaderboard was right (Gaikwad 635, du Plessis 633) but the model
+  read the second line. The tool now starts with "Leader: RD Gaikwad, 635 runs scored".
 
 ## 6. Docker, Kubernetes, AWS
 

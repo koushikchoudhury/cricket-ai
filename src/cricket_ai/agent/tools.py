@@ -120,8 +120,31 @@ def _num(x, fmt="{:.0f}") -> str:
 
 def player_stats(ctx: CricketContext, player: str, season: str | int | None = None) -> str:
     season = normalise_season(season)
+    bat, bowl = _player_rows(ctx, f"%{player.strip()}%", season)
+    note = ""
+    if bat.empty and bowl.empty:
+        # Names are stored with initials ('DA Warner'); models often expand them
+        # ('David Warner'). Fall back to the surname and say so.
+        surname = player.strip().split()[-1] if player.strip() else ""
+        if len(surname) >= 3:
+            bat, bowl = _player_rows(ctx, f"%{surname}%", season)
+            if not (bat.empty and bowl.empty):
+                note = f"No exact match for '{player}'; matched by surname '{surname}'. "
+    when = f"the {season} season" if season else "all seasons"
+    runs_by = bat.set_index("player").runs
+    names = sorted(set(bat.player) | set(bowl.player), key=lambda n: -runs_by.get(n, 0))
+    if not names:
+        return f"No player matching '{player}' in {when}."
+    lines = [note.strip()] if note else []
+    if len(names) > 1:
+        lines.append(f"{len(names)} players match; showing up to 3.")
+    bat_i, bowl_i = bat.set_index("player"), bowl.set_index("player")
+    return _player_lines(names, bat_i, bowl_i, when, lines)
+
+
+def _player_rows(ctx: CricketContext, like: str, season: str | None):
     clause, sparams = _season_clause(season)
-    params = [f"%{player.strip()}%", *sparams]
+    params = [like, *sparams]
     bat = ctx.sql.con.execute(
         f"""SELECT player, COUNT(*) AS innings, SUM(runs) AS runs, SUM(balls) AS balls,
                    SUM(CASE WHEN NOT not_out THEN 1 ELSE 0 END) AS outs, MAX(runs) AS highest
@@ -134,15 +157,10 @@ def player_stats(ctx: CricketContext, player: str, season: str | int | None = No
             FROM bowling WHERE player ILIKE ?{clause} GROUP BY player""",
         params,
     ).df()
-    when = f"the {season} season" if season else "all seasons"
-    runs_by = bat.set_index("player").runs
-    names = sorted(set(bat.player) | set(bowl.player), key=lambda n: -runs_by.get(n, 0))
-    if not names:
-        return f"No player matching '{player}' in {when}."
-    lines = []
-    if len(names) > 1:
-        lines.append(f"{len(names)} players match '{player}'; showing up to 3.")
-    bat_i, bowl_i = bat.set_index("player"), bowl.set_index("player")
+    return bat, bowl
+
+
+def _player_lines(names, bat_i, bowl_i, when: str, lines: list[str]) -> str:
     for name in names[:3]:
         # Batting and bowling are reported separately: runs conceded as a bowler are never
         # added to, or worded as, runs scored.
@@ -233,30 +251,52 @@ def leaderboard(
     if rows.empty:
         return f"No data for {unit} in {when}."
     note = f" (minimum {min_balls} balls)" if min_balls else ""
-    lines = [f"Top {len(rows)} by {unit} in {when}{note}:"]
+    first = rows.iloc[0]
+    lines = [
+        f"Leader: {first.player}, {first.value:g} {unit} in {when}.",
+        f"Top {len(rows)} by {unit} in {when}{note}:",
+    ]
     lines += [f"{i}. {r.player}: {r.value:g}" for i, r in enumerate(rows.itertuples(), 1)]
     return "\n".join(lines)
+
+
+def overs_to_balls(overs: float | str) -> int:
+    """Cricket notation: 12 -> 72 balls, 12.3 -> 75 balls (the digit after the point is balls)."""
+    text = str(overs).strip()
+    whole, _, part = text.partition(".")
+    balls = int(part[:1] or 0)
+    if balls > 5:
+        raise ValueError(f"'{overs}' is not valid overs notation (balls after the point are 0-5)")
+    return int(whole or 0) * 6 + balls
 
 
 def win_probability(
     ctx: CricketContext,
     target: int,
     runs_scored: int,
-    balls_bowled: int,
+    overs: float | str,
     wickets_lost: int,
-    total_balls: int = 120,
+    total_overs: int = 20,
     runs_last_12_balls: int | None = None,
     wickets_last_12_balls: int = 0,
 ) -> str:
     from cricket_ai.winprob.model import predict_proba
 
+    if not 0 <= float(overs) <= total_overs:
+        return (
+            f"Error: overs={overs} is outside 0-{total_overs}. Pass overs bowled as in the "
+            "question (e.g. 12 or 12.3), not balls."
+        )
+    balls_bowled = overs_to_balls(overs)
+    total_balls = total_overs * 6
     runs_needed = target - runs_scored
     balls_left = total_balls - balls_bowled
     wickets_in_hand = 10 - wickets_lost
+    situation = f"Situation: chasing {target}, {runs_scored}/{wickets_lost} after {overs} overs."
     if runs_needed <= 0:
-        return "The chasing side has already reached the target: win probability 100%."
+        return f"{situation} The target is already reached: win probability 100%."
     if balls_left <= 0 or wickets_in_hand <= 0:
-        return "The chase is over and the target was not reached: win probability 0%."
+        return f"{situation} The chase is over without reaching the target: win probability 0%."
     crr = runs_scored * 6 / balls_bowled if balls_bowled else 0.0
     rrr = min(runs_needed * 6 / balls_left, 36.0)
     par = (ctx.latest_par_rpo or 8.0) * total_balls / 6
@@ -280,9 +320,8 @@ def win_probability(
     )
     p = float(predict_proba(ctx.winprob_model, state)[0])
     return (
-        f"Chasing {target}: {runs_scored}/{wickets_lost} after {balls_bowled // 6}.{balls_bowled % 6} "
-        f"overs needs {runs_needed} off {balls_left} balls (required rate {rrr:.2f}). "
-        f"Win probability for the chasing side: {p:.1%} (era par score {par:.0f})."
+        f"{situation} Needs {runs_needed} runs off {balls_left} balls "
+        f"(required rate {rrr:.2f}). Win probability for the chasing side: {p:.1%}."
     )
 
 
@@ -371,8 +410,10 @@ def build_tools(ctx: CricketContext) -> list[StructuredTool]:
             (
                 win_probability,
                 "win_probability",
-                "Chasing side's chance of winning a T20 from the situation: target, runs "
-                "scored so far, legal balls bowled (overs x 6) and wickets lost.",
+                "Chasing side's chance of winning a T20. Pass the numbers exactly as the "
+                "question states them: target, runs_scored, overs bowled (e.g. 12 or 12.3) "
+                "and wickets_lost. For '100/2 after 12 overs': runs_scored=100, "
+                "wickets_lost=2, overs=12.",
             )
         )
     if ctx.gan is not None:

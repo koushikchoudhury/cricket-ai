@@ -531,14 +531,15 @@ def agent_evaluate(
     model: str = typer.Option(None),
     per_type: int = typer.Option(4, help="Tasks per type"),
     max_steps: int = typer.Option(6),
+    repeats: int = typer.Option(1, help="Run every task this many times; report mean and range"),
 ):
     """Score tool choice and answers on tasks generated from the data."""
     from cricket_ai.agent.evaluate import evaluate_agent, generate_tasks, write_report
 
     agent, name = _make_agent(dataset, llm, model, True, max_steps)
     tasks = generate_tasks(agent.ctx, per_type=per_type)
-    typer.echo(f"Running {len(tasks)} tasks ...")
-    results = evaluate_agent(agent, tasks)
+    typer.echo(f"Running {len(tasks)} tasks x {repeats} run(s) ...")
+    results = evaluate_agent(agent, tasks, repeats=repeats)
     out = config.REPORTS_DIR / dataset / "agent"
     summary = write_report(results, out, name)
     typer.echo(json.dumps(summary, indent=2))
