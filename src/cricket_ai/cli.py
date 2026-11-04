@@ -130,7 +130,9 @@ def winprob_train(
 
 @winprob_app.command("curve")
 def winprob_curve(
-    match_id: str = typer.Argument(..., help="Cricsheet match id (the JSON file name)"),
+    match_id: str = typer.Argument(
+        ..., help="Cricsheet match id, e.g. 1473505 (file name without .json)"
+    ),
     dataset: str = typer.Option("ipl"),
     moments: int = typer.Option(5, help="How many key moments to list"),
 ):
@@ -145,6 +147,17 @@ def winprob_curve(
     deliveries = pd.read_parquet(proc / "deliveries.parquet")
     matches = pd.read_parquet(proc / "matches.parquet").set_index("match_id")
     model = load(config.MODELS_DIR / dataset / "winprob_mlp.pt")
+    if match_id not in set(states.match_id):
+        recent = (
+            matches.loc[matches.index.isin(states.match_id)]
+            .sort_values("start_date", ascending=False)
+            .head(8)
+        )
+        typer.echo(f"No chase found for match id '{match_id}'.", err=True)
+        typer.echo("Match ids are Cricsheet file names without .json. Recent chases:", err=True)
+        for mid, r in recent.iterrows():
+            typer.echo(f"  {mid}  {r.start_date:%Y-%m-%d}  {r.team1} v {r.team2}", err=True)
+        raise typer.Exit(code=1)
     curve = match_curve(model, states, deliveries, match_id)
     m = matches.loc[match_id]
     title = (
