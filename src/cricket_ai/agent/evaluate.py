@@ -85,10 +85,20 @@ def generate_tasks(ctx: CricketContext, per_type: int = 4, seed: int = 7) -> lis
             (150, 140, 18, 3),
             (170, 40, 8, 1),
         ][:per_type]:
+            from cricket_ai.agent.tools import win_probability
+
+            # Ground truth: the tool's answer when called with the correct arguments.
+            truth = win_probability(ctx, target, runs, overs, wkts)
             tasks.append(
                 {
                     "type": "chase",
-                    "expected": None,
+                    "expected": PERCENT.findall(truth)[-1].replace(" ", ""),
+                    "expected_args": {
+                        "target": target,
+                        "runs_scored": runs,
+                        "overs": overs,
+                        "wickets_lost": wkts,
+                    },
                     "question": f"A team chasing {target} is {runs}/{wkts} after {overs} overs. "
                     "What is their chance of winning?",
                 }
@@ -104,13 +114,45 @@ def generate_tasks(ctx: CricketContext, per_type: int = 4, seed: int = 7) -> lis
     return tasks
 
 
+def args_match(expected: dict, calls: list[dict]) -> bool:
+    """Did any call pass the expected arguments (numbers compared as numbers)?"""
+
+    def same(a, b):
+        try:
+            return abs(float(a) - float(b)) < 1e-9
+        except (TypeError, ValueError):
+            return str(a).strip().lower() == str(b).strip().lower()
+
+    return any(all(k in c and same(c[k], v) for k, v in expected.items()) for c in calls)
+
+
+def percent_matches(expected: str, answer: str) -> bool:
+    """The answer states the expected probability (rounding to whole percent is fine)."""
+    want = float(expected.rstrip("%"))
+    for found in PERCENT.findall(answer):
+        got = float(found.rstrip("% "))
+        decimals = len(found.rstrip("% ").split(".")[1]) if "." in found else 0
+        if abs(round(want, decimals) - got) < 1e-9:
+            return True
+    return False
+
+
 def score_task(
-    task: dict, answer: str, tools_used: list[str], tool_outputs: list[str] | None = None
+    task: dict,
+    answer: str,
+    tools_used: list[str],
+    tool_outputs: list[str] | None = None,
+    tool_args: list[dict] | None = None,
 ) -> dict:
     right_tool = bool(EXPECTED_TOOLS[task["type"]] & set(tools_used))
+    # Faithful to the evidence. Note this cannot catch a tool called with wrong arguments,
+    # because the answer then faithfully repeats a wrong tool output; args_ok covers that.
     invented = unsupported_numbers(answer, task["question"], *(tool_outputs or []))
+    args_ok = None
+    if task.get("expected_args"):
+        args_ok = args_match(task["expected_args"], tool_args or [])
     if task["type"] == "chase":
-        correct = right_tool and bool(PERCENT.search(answer))
+        correct = right_tool and bool(args_ok) and percent_matches(task["expected"], answer)
     elif task["type"] == "synthetic":
         correct = right_tool and bool(re.search(r"\d", answer))
     else:
@@ -119,6 +161,7 @@ def score_task(
         "right_tool": right_tool,
         "faithful": not invented,
         "invented_numbers": ",".join(invented),
+        "args_ok": args_ok,
         "correct": bool(correct and not invented),
     }
 
@@ -129,9 +172,11 @@ def evaluate_agent(agent, tasks: list[dict]) -> pd.DataFrame:
         try:
             r = agent.ask(t["question"])
             answer, used, outputs = r.answer, r.tools_used, [c["output"] for c in r.tool_calls]
+            args = [c["args"] for c in r.tool_calls]
             steps, secs, limit, error = r.steps, r.seconds, r.stopped_by_limit, None
         except Exception as exc:  # noqa: BLE001 - one failing task should not stop the run
             answer, used, outputs, steps, secs, limit, error = "", [], [], 0, 0.0, False, str(exc)
+            args = []
         rows.append(
             {
                 "type": t["type"],
@@ -139,11 +184,12 @@ def evaluate_agent(agent, tasks: list[dict]) -> pd.DataFrame:
                 "expected": t["expected"],
                 "answer": answer,
                 "tools": ",".join(used),
+                "tool_args": json.dumps(args, default=str),
                 "steps": steps,
                 "seconds": secs,
                 "step_limit": limit,
                 "error": error,
-                **score_task(t, answer, used, outputs),
+                **score_task(t, answer, used, outputs, args),
             }
         )
     return pd.DataFrame(rows)
@@ -168,6 +214,11 @@ def write_report(results: pd.DataFrame, out: Path, llm: str) -> dict:
         "tasks": len(results),
         "tool_accuracy": round(float(results.right_tool.mean()), 3),
         "faithfulness": round(float(results.faithful.mean()), 3),
+        "argument_accuracy": (
+            round(float(results.args_ok.dropna().astype(bool).mean()), 3)
+            if results.args_ok.notna().any()
+            else None
+        ),
         "answer_accuracy": round(float(results.correct.mean()), 3),
         "mean_steps": round(float(results.steps.mean()), 2),
         "median_seconds": round(float(results.seconds.median()), 2),

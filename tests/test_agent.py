@@ -104,7 +104,7 @@ def test_split_seasons_match_their_first_year():
 def test_leaderboard(ctx):
     tool = {t.name: t for t in build_tools(ctx)}["leaderboard"]
     out = tool.invoke({"stat": "runs", "season": "2024", "n": 3})
-    assert out.startswith("Top 3 by runs scored in the 2024 season")
+    assert "Top 3 by runs scored in the 2024 season" in out
     assert "1. B1: 16" in out
     top = ctx.sql.con.execute(
         "SELECT player FROM batting GROUP BY player ORDER BY SUM(runs) DESC LIMIT 1"
@@ -185,23 +185,33 @@ def test_task_generation_and_scoring(ctx, tmp_path):
     assert not score_task(top, "No idea", ["player_stats"])["right_tool"]  # cannot rank players
     chase = {
         "type": "chase",
-        "expected": None,
+        "expected": "83.9%",
+        "expected_args": {"target": 180, "runs_scored": 100, "overs": 12, "wickets_lost": 2},
         "question": "A team chasing 180 is 100/2 after 12 overs. What is their chance?",
     }
-    tool_out = "Chasing 180: 100/2 after 12.0 overs needs 80 off 48 balls. Win probability: 83.9%"
-    assert score_task(chase, "They have an 83.9% chance.", ["win_probability"], [tool_out])[
-        "correct"
-    ]
-    # the run captured on 2026-11-04: right tool, right %, but misquoted the score as 120/2
+    good_args = [{"target": 180, "runs_scored": 100, "overs": 12, "wickets_lost": 2}]
+    tool_out = "Situation: chasing 180, 100/2 after 12 overs. Needs 80 runs off 48 balls. 83.9%."
+    ok = score_task(chase, "They have an 83.9% chance.", ["win_probability"], [tool_out], good_args)
+    assert ok["correct"] and ok["args_ok"]
+    assert score_task(chase, "About 84%.", ["win_probability"], [tool_out], good_args)["correct"]
+    # run 1, 2026-11-04: right tool, right %, but misquoted the score as 120/2
     misquote = score_task(
-        chase, "They are 120/2 with an 83.9% chance.", ["win_probability"], [tool_out]
+        chase, "They are 120/2 with an 83.9% chance.", ["win_probability"], [tool_out], good_args
     )
-    assert (
-        not misquote["faithful"]
-        and not misquote["correct"]
-        and misquote["invented_numbers"] == "120"
+    assert not misquote["faithful"] and not misquote["correct"]
+    assert misquote["invented_numbers"] == "120"
+    # run 2, 2026-11-04: the model called the tool with runs_scored=60. The answer faithfully
+    # repeats the (wrong) tool output, so only the argument check and ground truth catch it.
+    wrong_out = "Situation: chasing 180, 60/2 after 12 overs. Needs 120 runs off 48 balls. 30.3%."
+    wrong = score_task(
+        chase,
+        "The team is at 60/2 after 12 overs, needs 120 off 48 balls: 30.3%.",
+        ["win_probability"],
+        [wrong_out],
+        [{"target": 180, "runs_scored": 60, "overs": 12, "wickets_lost": 2}],
     )
-    assert not score_task(chase, "likely", ["win_probability"], [tool_out])["correct"]
+    assert wrong["faithful"] and not wrong["args_ok"] and not wrong["correct"]
+    assert not score_task(chase, "likely", ["win_probability"], [tool_out], good_args)["correct"]
 
     task = [t for t in tasks if t["type"] == "season_runs"][:1]
     llm = scripted(
@@ -236,9 +246,36 @@ def test_win_probability_tool(ctx):
     split = date_split(states)
     model, _ = mlp.train_mlp(split.train, split.val, mlp.TrainConfig(max_epochs=3, device="cpu"))
     ctx.winprob_model, ctx.latest_par_rpo = model, 8.0
-    easy = win_probability(ctx, target=150, runs_scored=145, balls_bowled=100, wickets_lost=1)
-    hard = win_probability(ctx, target=220, runs_scored=60, balls_bowled=90, wickets_lost=7)
+    easy = win_probability(ctx, target=150, runs_scored=145, overs=16.4, wickets_lost=1)
+    hard = win_probability(ctx, target=220, runs_scored=60, overs=15, wickets_lost=7)
     pct = [float(s.split("side: ")[1].split("%")[0]) for s in (easy, hard)]
     assert pct[0] > pct[1]
-    assert "100%" in win_probability(ctx, 150, 150, 100, 1)
+    assert "100%" in win_probability(ctx, 150, 150, 16.4, 1)
+    # run 2 passed 18 (meaning overs) where balls were expected; overs are now the input,
+    # and a ball count is rejected instead of silently giving "102 balls left"
+    assert "Needs 10 runs off 12 balls" in win_probability(ctx, 150, 140, 18, 3)
+    assert win_probability(ctx, 150, 140, 108, 3).startswith("Error: overs=108")
     assert "win_probability" in [t.name for t in build_tools(ctx)]
+
+
+def test_overs_notation():
+    from cricket_ai.agent.tools import overs_to_balls
+
+    assert overs_to_balls(12) == 72 and overs_to_balls("12.3") == 75 and overs_to_balls(0.5) == 5
+    with pytest.raises(ValueError):
+        overs_to_balls("12.7")
+
+
+def test_player_name_falls_back_to_surname(ctx):
+    # run 2 (DA Warner): models expand initials into full names; data stores initials
+    tool = {t.name: t for t in build_tools(ctx)}["player_stats"]
+    out = tool.invoke({"player": "Someone Kol_1"})
+    assert out.startswith("No exact match for 'Someone Kol_1'; matched by surname 'Kol_1'.")
+    assert "Kol_1, all seasons. BATTING" in out
+    assert tool.invoke({"player": "Zz"}).startswith("No player matching")
+
+
+def test_leaderboard_leads_with_the_answer(ctx):
+    tool = {t.name: t for t in build_tools(ctx)}["leaderboard"]
+    out = tool.invoke({"stat": "runs", "season": "2024"})
+    assert out.splitlines()[0] == "Leader: B1, 16 runs scored in the 2024 season."
