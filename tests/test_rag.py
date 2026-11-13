@@ -426,3 +426,33 @@ def test_warm_up_ollama(monkeypatch):
 
     monkeypatch.setattr(requests, "post", refused)
     assert llm.warm_up_ollama("qwen2.5:3b") is False
+
+
+def test_follow_up_is_rewritten_before_search(retriever, sql):
+    history = [
+        {"role": "user", "content": "How many runs did B1 score in the 2024 season?"},
+        {"role": "assistant", "content": "B1 scored 16 runs."},
+    ]
+    llm = fake_llm(
+        "How many runs did B2 score in the 2024 season?",  # rewrite
+        "```sql\nSELECT 0 AS runs\n```",
+        "B2 scored 0 runs.",
+    )
+    a = CricketRAG(retriever, sql, llm).ask("what about B2?", history=history)
+    assert a.question == "what about B2?"
+    assert a.standalone == "How many runs did B2 score in the 2024 season?"
+    assert a.route == "sql"  # routed on the rewritten question ("what about" alone is not)
+    assert a.text == "B2 scored 0 runs."
+
+
+def test_no_rewrite_without_history_or_llm(retriever, sql):
+    rag = CricketRAG(retriever, sql, None)
+    assert rag.condense("what about B2?", [{"role": "user", "content": "x"}]) == "what about B2?"
+    assert CricketRAG(retriever, sql, fake_llm()).condense("Who won?", None) == "Who won?"
+
+
+def test_rewrite_that_answers_instead_is_ignored(retriever, sql):
+    history = [{"role": "user", "content": "B1 runs in 2024?"}]
+    rambling = "Sure! Here is the rewritten question:\nHow many runs did B2 score?"
+    rag = CricketRAG(retriever, sql, fake_llm(rambling))
+    assert rag.condense("and B2?", history) == "and B2?"

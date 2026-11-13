@@ -25,6 +25,16 @@ SQL_SYSTEM = (
     "(aggregate, ORDER BY, LIMIT 10). Never modify data."
 )
 
+CONDENSE_SYSTEM = (
+    "You rewrite the user's latest message as one standalone question about cricket.\n"
+    "- Use the conversation to fill in what the message leaves out: the player, team, season, "
+    "match or statistic it refers to.\n"
+    "- Keep names, seasons and dates exactly as written in the conversation.\n"
+    "- If the message is already a complete question, return it unchanged.\n"
+    "- Reply with the question only: no explanation, no quotes."
+)
+HISTORY_TURNS = 6  # the last three question/answer pairs
+
 ANSWER_SYSTEM = (
     "You answer questions about cricket using only the context provided.\n"
     "- Numbered sources [1], [2], ... are retrieved documents; cite the ones you use.\n"
@@ -48,6 +58,9 @@ class Answer:
     error: str | None = None
     seconds: float = 0.0
     context: str = ""  # everything the answer was allowed to use (for faithfulness checks)
+    # The question actually searched for: a follow-up such as "what about Kohli?" is
+    # rewritten into a standalone question using the conversation.
+    standalone: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -105,15 +118,44 @@ class CricketRAG:
                 err = f"{type(exc).__name__}: {exc}"
         return sql_text, rows, err
 
-    def ask(self, question: str, route: str | None = None) -> Answer:
+    def condense(self, question: str, history: list[dict] | None) -> str:
+        """Rewrite a follow-up into a standalone question (needs an LLM and some history)."""
+        if self.llm is None or not history:
+            return question
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        turns = "\n".join(
+            f"{'User' if t['role'] == 'user' else 'Assistant'}: {t['content']}"
+            for t in history[-HISTORY_TURNS:]
+        )
+        reply = self.llm.invoke(
+            [
+                SystemMessage(CONDENSE_SYSTEM),
+                HumanMessage(f"Conversation:\n{turns}\n\nLatest message: {question}"),
+            ]
+        )
+        rewritten = message_text(reply).strip().strip('"').strip()
+        # Guard against a model that answers instead of rewriting.
+        if not rewritten or len(rewritten) > 300 or "\n" in rewritten:
+            return question
+        return rewritten
+
+    def ask(
+        self, question: str, route: str | None = None, history: list[dict] | None = None
+    ) -> Answer:
+        """Answer one question. ``history`` is earlier turns as
+        ``{"role": "user"|"assistant", "content": str}``, used to understand follow-ups."""
         start = time.perf_counter()
+        original = question
+        question = self.condense(question, history)
         route = route if route in ("sql", "search") else route_question(question)
         hits = self.retriever.search(question, k=self.k, method=self.method)
         sources = [
             {"n": i, "doc_id": h.doc.doc_id, "title": h.doc.title} for i, h in enumerate(hits, 1)
         ]
-        answer = Answer(question=question, route=route, text="", sources=sources)
-
+        answer = Answer(
+            question=original, route=route, text="", sources=sources, standalone=question
+        )
         rows = None
         if route == "sql" and self.llm is not None and self.sql is not None:
             answer.sql, rows, answer.error = self.run_sql(question)
