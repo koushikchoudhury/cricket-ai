@@ -99,7 +99,7 @@ def curve_chart(curve: pd.DataFrame) -> alt.LayerChart:
         score=curve.runs_scored.astype(int).astype(str)
         + "/"
         + (10 - curve.wickets_in_hand).astype(int).astype(str),
-        is_wicket=curve.is_wicket.fillna(False).astype(bool),
+        is_wicket=curve.is_wicket.eq(True),
     )
     base = alt.Chart(data).encode(
         x=alt.X("overs:Q", title="Overs", scale=alt.Scale(domain=[0, 20])),
