@@ -268,6 +268,9 @@ leaderboard tool. Reading the answers showed the score was still too high:
       progress while the agent works
 - [x] Follow-up questions keep context (last three question/answer pairs); "how about kohli?"
       after a 2020 question now means Kohli in 2020
+- [x] Ask page is a chat; follow-ups are rewritten into standalone questions before search
+      (question condensing), and the chat shows how each follow-up was understood. Found when
+      "what about kohli ?" after a 2016 question retrieved random Kohli seasons
 - [ ] Page for module 3 when it exists
 - [ ] Docker image and deployment (module 6)
 

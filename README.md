@@ -163,7 +163,7 @@ cricket-ai app            # opens http://localhost:8501
 | Analytics | Batting, bowling, phase and team tables, filtered by season |
 | Win probability | Chase calculator with "what if" wickets; the win-probability curve of any match |
 | Synthetic data | Generate overs with the GAN, compare them with real overs, download them |
-| Ask | Question answering with sources and the SQL that was run |
+| Ask | Chat with question answering: sources and SQL under each answer; follow-ups keep the context |
 | Agent | Chat with the LangGraph agent and see every tool call |
 
 Pages explain what to run when something is not built yet, and the language model for Ask and

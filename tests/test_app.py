@@ -141,11 +141,11 @@ def test_analytics_filters_by_season(app):
 
 def test_ask_returns_sources_without_llm(app):
     at = open_page(app, "Ask")
-    at.text_input(key="ask_question").set_value("Who won the match on 1 April 2020?")
-    button(at, "Ask").click().run()
+    at.chat_input[0].set_value("Who won the match on 1 April 2020?").run()
     assert not at.exception
-    assert any("Retrieved sources" in i.value for i in at.info)
-    assert len(at.expander) >= 5  # language-model expander + 5 sources
+    assert [m.name for m in at.chat_message] == ["user", "assistant"]
+    assert "most relevant sources" in at.chat_message[1].markdown[0].value
+    assert any(e.label == "Sources (5)" for e in at.expander)
 
 
 def test_ask_with_llm_shows_answer_and_sql(app, monkeypatch):
@@ -160,11 +160,55 @@ def test_ask_with_llm_shows_answer_and_sql(app, monkeypatch):
     )
     monkeypatch.setattr(state, "providers", lambda: OLLAMA)
     at = open_page(app, "Ask", provider="ollama")
-    at.text_input(key="ask_question").set_value("How many matches are there?")
-    button(at, "Ask").click().run()
+    at.chat_input[0].set_value("How many matches are there?").run()
     assert not at.exception
-    assert any("There are 60 matches" in m.value for m in at.markdown)
+    assert "There are 60 matches" in at.chat_message[1].markdown[0].value
     assert "SELECT COUNT(*)" in at.code[0].value
+
+
+def test_ask_is_a_conversation_and_understands_follow_ups(app, monkeypatch):
+    # Your run on 2026-11-14: "what about kohli ?" after a question about 2016 lost the
+    # context. The follow-up is now rewritten into a standalone question before searching.
+    replies = iter(
+        [
+            # question 1 (no history, so no rewrite): SQL, then the answer
+            AIMessage("```sql\nSELECT 16 AS runs\n```"),
+            AIMessage("B1 scored 16 runs in the 2024 season."),
+            # question 2: rewrite, SQL, answer
+            AIMessage("How many runs did B2 score in the 2024 season?"),
+            AIMessage("```sql\nSELECT 0 AS runs\n```"),
+            AIMessage("B2 scored 0 runs in the 2024 season."),
+        ]
+    )
+    seen = []
+
+    class Recording(GenericFakeChatModel):
+        def invoke(self, messages, *args, **kwargs):
+            seen.append(messages)
+            return super().invoke(messages, *args, **kwargs)
+
+    monkeypatch.setattr(state, "chat_model", lambda provider, model: Recording(messages=replies))
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    at = open_page(app, "Ask", provider="ollama")
+    at.chat_input[0].set_value("How many runs did B1 score in the 2024 season?").run()
+    at.chat_input[0].set_value("what about B2?").run()
+    assert not at.exception
+
+    assert [m.name for m in at.chat_message] == ["user", "assistant", "user", "assistant"]
+    assert at.chat_message[3].markdown[0].value == "B2 scored 0 runs in the 2024 season."
+    understood = [c.value for c in at.caption if c.value.startswith("Understood as")]
+    assert understood == ["Understood as: *How many runs did B2 score in the 2024 season?*"]
+    # the rewrite saw the earlier question and answer
+    rewrite_prompt = seen[2][-1].content
+    assert "B1 scored 16 runs" in rewrite_prompt and "what about B2?" in rewrite_prompt
+
+
+def test_ask_clear_chat(app):
+    at = open_page(app, "Ask")
+    at.chat_input[0].set_value("Who won the match on 1 April 2020?").run()
+    assert len(at.chat_message) == 2
+    next(b for b in at.sidebar.button if b.label == "Clear chat").click().run()
+    assert len(at.chat_message) == 0
 
 
 def test_agent_needs_a_model_then_chats(app, monkeypatch):
