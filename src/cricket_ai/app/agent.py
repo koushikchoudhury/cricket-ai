@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from cricket_ai.app import state
+from cricket_ai.app import cloud, state
 
 EXAMPLES = [
     "Who scored the most runs in the 2016 season?",
@@ -117,6 +117,11 @@ def render(p: state.Paths, provider: str, model: str | None) -> None:
     question = st.chat_input("Ask about matches, players, chases or synthetic overs")
     question = question or st.session_state.pop("agent_pending", None)
     if not question:
+        return
+
+    refused = cloud.take_question()
+    if refused:
+        st.info(refused + " The Ask page still answers from the sources.")
         return
 
     earlier = [{"role": t["role"], "content": t["content"]} for t in history]

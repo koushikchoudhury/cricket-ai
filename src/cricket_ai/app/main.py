@@ -9,7 +9,7 @@ import os
 
 import streamlit as st
 
-from cricket_ai.app import agent, analytics, ask, overview, state, synthetic, winprob
+from cricket_ai.app import agent, analytics, ask, cloud, overview, state, synthetic, winprob
 from cricket_ai.llm import DEFAULT_MODELS, llm_settings
 
 PAGES = ["Overview", "Analytics", "Win probability", "Synthetic data", "Ask", "Agent"]
@@ -45,6 +45,11 @@ def choose_model() -> tuple[str, str | None]:
 
 def main() -> None:
     st.set_page_config(page_title="Cricket AI", page_icon="🏏", layout="wide")
+    cloud.apply_secrets()
+    try:
+        cloud.ensure_data()  # hosted: download the data bundle on first start
+    except Exception as exc:  # noqa: BLE001 - show the problem on the page
+        st.error(f"Could not download the data bundle: {type(exc).__name__}: {exc}")
 
     with st.sidebar:
         st.header("Cricket AI")
@@ -57,6 +62,12 @@ def main() -> None:
         )
         with st.expander("Language model", expanded=page in ("Ask", "Agent")):
             provider, model = choose_model()
+        if page in ("Ask", "Agent") and provider != "none":
+            cloud.sidebar_budget()
+        st.caption(
+            "Data: [Cricsheet](https://cricsheet.org), Open Data Commons Attribution License. "
+            "Code: [GitHub](https://github.com/koushikchoudhury/cricket-ai)."
+        )
 
     p = state.paths(dataset)
     if not available:

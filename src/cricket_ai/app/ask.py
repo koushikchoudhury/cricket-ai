@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from cricket_ai.app import state
+from cricket_ai.app import cloud, state
 
 EXAMPLES = [
     "Who won the IPL final in 2016?",
@@ -93,8 +93,15 @@ def render(p: state.Paths, provider: str, model: str | None) -> None:
     with st.chat_message("user"):
         st.markdown(question)
     with st.chat_message("assistant"):
+        llm = None
+        if provider != "none":
+            refused = cloud.take_question()
+            if refused:
+                st.info(refused)
+            else:
+                llm = state.chat_model(provider, model)
         try:
-            rag = CricketRAG(retriever, state.sql(p), state.chat_model(provider, model), k=k)
+            rag = CricketRAG(retriever, state.sql(p), llm, k=k)
             with st.spinner("Thinking ..."):
                 answer = rag.ask(
                     question, route=None if route == "auto" else route, history=earlier
@@ -104,7 +111,7 @@ def render(p: state.Paths, provider: str, model: str | None) -> None:
             state.llm_error(exc, provider)
             return
         if answer.text.startswith("No LLM configured"):
-            text = "Here are the most relevant sources (no language model selected)."
+            text = "Here are the most relevant sources."
         else:
             text = answer.text
         turn = {

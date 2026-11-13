@@ -271,6 +271,12 @@ leaderboard tool. Reading the answers showed the score was still too high:
 - [x] Ask page is a chat; follow-ups are rewritten into standalone questions before search
       (question condensing), and the chat shows how each follow-up was understood. Found when
       "what about kohli ?" after a 2016 question retrieved random Kohli seasons
+- [x] Sharing: laptop tunnel (Cloudflare quick tunnel) for live demos; DEPLOY.md for Streamlit
+      Community Cloud
+- [x] Hosting support: `cricket-ai bundle` (data + models + reports with checksums), download and
+      verified install on first start, secrets to environment, daily and per-visitor question
+      limits with fallback to sources, `streamlit_app.py`, CPU-only `requirements.txt`
+- [ ] Deploy to Streamlit Community Cloud and add the link to the README
 - [ ] Page for module 3 when it exists
 - [ ] Docker image and deployment (module 6)
 
@@ -303,3 +309,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: Module 5 built: LangGraph agent with five tools, approval, tracing, evaluation and UI.
 - 2026-11-04: First real RAG answer exposed a gap: playoff stage ("Final") was not parsed, so the final was unretrievable. Added the stage and a query-intent ranking vote.
 - 2026-11-14: Streamlit app with a page per module, sharing one win-probability helper with the agent.
+- 2026-11-14: Hosting support for Streamlit Community Cloud: data bundle, secrets, question budget, DEPLOY.md.

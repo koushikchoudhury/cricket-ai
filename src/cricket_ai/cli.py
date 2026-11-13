@@ -591,6 +591,23 @@ def run_app(
     raise typer.Exit(subprocess.call(cmd))
 
 
+@app.command("bundle")
+def bundle(
+    dataset: str = typer.Argument("ipl"),
+    out: Path = typer.Option(None, help="Zip to write (default dist/cricket-ai-<dataset>.zip)"),
+):
+    """Zip the built data and models so the app can be hosted (see DEPLOY.md)."""
+    from cricket_ai.deploy import create_bundle
+
+    target = out or Path("dist") / f"cricket-ai-{dataset}.zip"
+    report = create_bundle(dataset, target)
+    typer.echo(f"{report.files} files, {report.bytes / 1e6:.1f} MB -> {report.path}")
+    if report.missing:
+        typer.echo("Not included (not built yet, the app shows how to build them):")
+        for item in report.missing:
+            typer.echo(f"  {item}")
+
+
 @app.command("version")
 def version():
     from cricket_ai import __version__
