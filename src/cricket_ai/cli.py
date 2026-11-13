@@ -574,6 +574,22 @@ def agent_ui(
     launch(agent, port=port)
 
 
+@app.command("app")
+def run_app(
+    port: int = typer.Option(8501, help="Port for the local web app"),
+    headless: bool = typer.Option(False, help="Do not open a browser window"),
+):
+    """Open the Streamlit app: one page per module (pip install -e ".[app]")."""
+    import subprocess
+    import sys
+
+    script = Path(__file__).parent / "app" / "main.py"
+    cmd = [sys.executable, "-m", "streamlit", "run", str(script), "--server.port", str(port)]
+    if headless:
+        cmd += ["--server.headless", "true"]
+    raise typer.Exit(subprocess.call(cmd))
+
+
 @app.command("version")
 def version():
     from cricket_ai import __version__

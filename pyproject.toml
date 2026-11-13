@@ -30,6 +30,7 @@ anthropic = ["langchain-anthropic>=0.3"]
 openai = ["langchain-openai>=0.2"]
 agent = ["langgraph>=0.2", "langchain-core>=0.3", "duckdb>=1.0", "scikit-learn>=1.6", "scipy>=1.11"]
 ui = ["gradio>=4"]
+app = ["streamlit>=1.40", "altair>=5"]
 # Later modules add their own extras as they are built:
 # vision = ["ultralytics>=8.2", "opencv-python-headless>=4.9"]
 

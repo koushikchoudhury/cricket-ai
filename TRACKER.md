@@ -249,6 +249,18 @@ leaderboard tool. Reading the answers showed the score was still too high:
 - **top_scorer 2021**: the leaderboard was right (Gaikwad 635, du Plessis 633) but the model
   read the second line. The tool now starts with "Leader: RD Gaikwad, 635 runs scored".
 
+## App (Streamlit)
+
+**Deliverable:** one app that demonstrates every module from the data and models on disk.
+
+- [x] Pages: Overview, Analytics, Win probability (calculator + match curve + report),
+      Synthetic data (generate, compare, download), Ask (sources + SQL), Agent (chat + tool calls)
+- [x] Cached loaders keyed by file time, so rebuilt data and retrained models are picked up
+- [x] Friendly "not built yet" messages with the command to run; LLM errors shown, not raised
+- [x] `cricket-ai app`; headless tests of every page and the main flows (Streamlit AppTest)
+- [ ] Page for module 3 when it exists
+- [ ] Docker image and deployment (module 6)
+
 ## 6. Docker, Kubernetes, AWS
 
 **Deliverables:** an image per module, manifests that run on kind, a short EKS deployment
@@ -277,3 +289,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: Module 4 built: corpus, hybrid search, SQL route, LLM switch, image search, evaluation.
 - 2026-11-04: Module 5 built: LangGraph agent with five tools, approval, tracing, evaluation and UI.
 - 2026-11-04: First real RAG answer exposed a gap: playoff stage ("Final") was not parsed, so the final was unretrievable. Added the stage and a query-intent ranking vote.
+- 2026-11-14: Streamlit app with a page per module, sharing one win-probability helper with the agent.

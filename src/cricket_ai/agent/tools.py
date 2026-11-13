@@ -25,6 +25,7 @@ from langchain_core.tools import StructuredTool
 
 from cricket_ai.rag.retrieval import HybridRetriever
 from cricket_ai.rag.sql import SCHEMA, CricketSQL
+from cricket_ai.winprob.predict import chase_probability, overs_to_balls
 
 EXPENSIVE_TOOLS = {"generate_synthetic_overs"}
 MAX_TOOL_CHARS = 4000
@@ -260,16 +261,6 @@ def leaderboard(
     return "\n".join(lines)
 
 
-def overs_to_balls(overs: float | str) -> int:
-    """Cricket notation: 12 -> 72 balls, 12.3 -> 75 balls (the digit after the point is balls)."""
-    text = str(overs).strip()
-    whole, _, part = text.partition(".")
-    balls = int(part[:1] or 0)
-    if balls > 5:
-        raise ValueError(f"'{overs}' is not valid overs notation (balls after the point are 0-5)")
-    return int(whole or 0) * 6 + balls
-
-
 def win_probability(
     ctx: CricketContext,
     target: int,
@@ -280,8 +271,6 @@ def win_probability(
     runs_last_12_balls: int | None = None,
     wickets_last_12_balls: int = 0,
 ) -> str:
-    from cricket_ai.winprob.model import predict_proba
-
     if not 0 <= float(overs) <= total_overs:
         return (
             f"Error: overs={overs} is outside 0-{total_overs}. Pass overs bowled as in the "
@@ -291,34 +280,23 @@ def win_probability(
     total_balls = total_overs * 6
     runs_needed = target - runs_scored
     balls_left = total_balls - balls_bowled
-    wickets_in_hand = 10 - wickets_lost
     situation = f"Situation: chasing {target}, {runs_scored}/{wickets_lost} after {overs} overs."
     if runs_needed <= 0:
         return f"{situation} The target is already reached: win probability 100%."
-    if balls_left <= 0 or wickets_in_hand <= 0:
+    if balls_left <= 0 or wickets_lost >= 10:
         return f"{situation} The chase is over without reaching the target: win probability 0%."
-    crr = runs_scored * 6 / balls_bowled if balls_bowled else 0.0
-    rrr = min(runs_needed * 6 / balls_left, 36.0)
-    par = (ctx.latest_par_rpo or 8.0) * total_balls / 6
-    recent = runs_last_12_balls if runs_last_12_balls is not None else round(crr * 2)
-    state = pd.DataFrame(
-        [
-            {
-                "runs_needed": runs_needed,
-                "balls_left": balls_left,
-                "wickets_in_hand": wickets_in_hand,
-                "target": target,
-                "current_run_rate": crr,
-                "required_run_rate": rrr,
-                "runs_last_12_balls": recent,
-                "wickets_last_12_balls": wickets_last_12_balls,
-                "par_score": par,
-                "target_vs_par": target - par,
-                "balls_bowled": balls_bowled,
-            }
-        ]
+    p = chase_probability(
+        ctx.winprob_model,
+        target,
+        runs_scored,
+        balls_bowled,
+        wickets_lost,
+        total_balls,
+        ctx.latest_par_rpo,
+        runs_last_12_balls=runs_last_12_balls,
+        wickets_last_12_balls=wickets_last_12_balls,
     )
-    p = float(predict_proba(ctx.winprob_model, state)[0])
+    rrr = min(runs_needed * 6 / balls_left, 36.0)
     return (
         f"{situation} Needs {runs_needed} runs off {balls_left} balls "
         f"(required rate {rrr:.2f}). Win probability for the chasing side: {p:.1%}."

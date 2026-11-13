@@ -20,7 +20,7 @@ jobs:
       - name: Install (CPU PyTorch keeps CI fast)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev,winprob,synthetic,rag,agent]"
+          pip install -e ".[dev,winprob,synthetic,rag,agent,app]"
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
