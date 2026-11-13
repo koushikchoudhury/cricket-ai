@@ -148,6 +148,27 @@ cricket-ai agent evaluate ipl --llm ollama       # tool-choice and answer accura
 pip install gradio && cricket-ai agent ui --llm ollama   # browser chat
 ```
 
+## The app
+
+One Streamlit app shows every module, reading the data and models built by the commands above:
+
+```bash
+pip install -e ".[app,winprob,synthetic,rag,agent,ollama]"
+cricket-ai app            # opens http://localhost:8501
+```
+
+| Page | What you can do |
+|---|---|
+| Overview | See what is built on this machine and how to build what is missing |
+| Analytics | Batting, bowling, phase and team tables, filtered by season |
+| Win probability | Chase calculator with "what if" wickets; the win-probability curve of any match |
+| Synthetic data | Generate overs with the GAN, compare them with real overs, download them |
+| Ask | Question answering with sources and the SQL that was run |
+| Agent | Chat with the LangGraph agent and see every tool call |
+
+Pages explain what to run when something is not built yet, and the language model for Ask and
+Agent is chosen in the sidebar (none, Ollama, Anthropic or OpenAI).
+
 ## Repository layout
 
 ```
@@ -159,6 +180,7 @@ src/cricket_ai/
   vision/      module 3
   rag/         module 4: corpus, retrieval, SQL, pipeline, images, evaluation
   agent/       module 5: tools, LangGraph graph, evaluation, UI
+  app/         Streamlit app: one page per module
   cli.py       `cricket-ai` command
 docker/        one Dockerfile per module
 infra/k8s/     kind and EKS manifests (module 6)
