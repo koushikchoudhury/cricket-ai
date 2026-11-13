@@ -103,7 +103,7 @@ The evaluation answers four questions about each synthetic table:
 ## Module 4: question answering (RAG + SQL)
 
 ```bash
-pip install -e ".[rag,embeddings,ollama]"      # or anthropic / openai instead of ollama
+pip install -e ".[rag,embeddings,ollama]"      # or groq / anthropic / openai instead of ollama
 cricket-ai rag index ipl --embedder st          # corpus + bge-small embeddings (GPU if present)
 cricket-ai rag ask "Who was player of the match in the 2016 final?" --llm ollama
 cricket-ai rag ask "How many runs did Kohli score in 2016?" --llm ollama   # goes to SQL
@@ -116,7 +116,7 @@ cricket-ai rag evaluate ipl --llm ollama        # retrieval + answer accuracy
   DuckDB runs in a locked-down, read-only database. Text answers cite their sources.
 - **Evaluation:** questions are generated from the data, so each has a known answer and a
   known source document: recall@k and MRR for retrieval, accuracy for answers.
-- **LLM:** `--llm none|ollama|anthropic|openai`. With `none`, you get the retrieved sources.
+- **LLM:** `--llm none|ollama|groq|anthropic|openai`. With `none`, you get the retrieved sources.
 
 ## Module 5: the agent
 
@@ -167,11 +167,11 @@ cricket-ai app            # opens http://localhost:8501
 | Agent | Chat with the LangGraph agent and see every tool call |
 
 Pages explain what to run when something is not built yet, and the language model for Ask and
-Agent is chosen in the sidebar (none, Ollama, Anthropic or OpenAI).
+Agent is chosen in the sidebar (none, Ollama, Groq, Anthropic or OpenAI; only the ones that are ready are listed).
 
 To share the app with others, see [DEPLOY.md](DEPLOY.md): a tunnel from your laptop for live
-demos, or a permanent free deployment on Streamlit Community Cloud with an API key and a
-daily question cap.
+demos, or a permanent free deployment on Streamlit Community Cloud with Groq's free tier
+(`openai/gpt-oss-120b`, no card needed) and a daily question cap.
 
 ## Repository layout
 

@@ -173,7 +173,7 @@ and clips, with an evaluation set and scores.
 - [x] Hybrid search with reciprocal rank fusion; date tokens for exact-date matching
 - [x] Structured route: number questions go to LLM-written SQL on DuckDB (read-only, file access off)
 - [x] Generation with numbered citations; one retry when the SQL fails
-- [x] LLM switch: none / Ollama / Anthropic / OpenAI (`--llm`, `CRICKET_AI_LLM`)
+- [x] LLM switch: none / Ollama / Groq / Anthropic / OpenAI (`--llm`, `CRICKET_AI_LLM`)
 - [x] Image search with CLIP (`cricket-ai rag images <folder>`), ready for frames from module 3
 - [x] Eval set generated from the tables: 5 question types with known answers and source ids
 - [x] Metrics: recall@1/5/10 and MRR for BM25, dense and hybrid; answer accuracy with an LLM
@@ -276,6 +276,9 @@ leaderboard tool. Reading the answers showed the score was still too high:
 - [x] Hosting support: `cricket-ai bundle` (data + models + reports with checksums), download and
       verified install on first start, secrets to environment, daily and per-visitor question
       limits with fallback to sources, `streamlit_app.py`, CPU-only `requirements.txt`
+- [x] Groq free tier as the hosted model (`openai/gpt-oss-120b`, low reasoning effort, no card
+      needed); when its per-minute limit is hit, Ask answers from sources and Agent says to
+      retry in a minute; daily cap 30 questions keeps inside 200K tokens a day
 - [ ] Deploy to Streamlit Community Cloud and add the link to the README
 - [ ] Page for module 3 when it exists
 - [ ] Docker image and deployment (module 6)
@@ -310,3 +313,4 @@ with teardown, and CI that builds images.
 - 2026-11-04: First real RAG answer exposed a gap: playoff stage ("Final") was not parsed, so the final was unretrievable. Added the stage and a query-intent ranking vote.
 - 2026-11-14: Streamlit app with a page per module, sharing one win-probability helper with the agent.
 - 2026-11-14: Hosting support for Streamlit Community Cloud: data bundle, secrets, question budget, DEPLOY.md.
+- 2026-11-14: Groq free tier for the hosted app (Llama 3.3 70B was retired; gpt-oss-120b instead), with rate-limit fallback.

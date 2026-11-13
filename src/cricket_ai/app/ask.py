@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from cricket_ai.app import cloud, state
+from cricket_ai.llm import is_rate_limited
 
 EXAMPLES = [
     "Who won the IPL final in 2016?",
@@ -100,16 +101,20 @@ def render(p: state.Paths, provider: str, model: str | None) -> None:
                 st.info(refused)
             else:
                 llm = state.chat_model(provider, model)
+        chosen_route = None if route == "auto" else route
         try:
             rag = CricketRAG(retriever, state.sql(p), llm, k=k)
             with st.spinner("Thinking ..."):
-                answer = rag.ask(
-                    question, route=None if route == "auto" else route, history=earlier
-                )
+                answer = rag.ask(question, route=chosen_route, history=earlier)
         except Exception as exc:  # noqa: BLE001 - show the failure instead of a traceback
-            history.pop()
-            state.llm_error(exc, provider)
-            return
+            if not is_rate_limited(exc):
+                history.pop()
+                state.llm_error(exc, provider)
+                return
+            # Free-tier limit hit: still answer, from the retrieved sources.
+            st.warning(state.RATE_LIMITED)
+            rag = CricketRAG(retriever, state.sql(p), None, k=k)
+            answer = rag.ask(question, route=chosen_route)
         if answer.text.startswith("No LLM configured"):
             text = "Here are the most relevant sources."
         else:

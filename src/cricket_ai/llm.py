@@ -8,6 +8,7 @@ provider    default model              needs
 =========== ========================== ==============================================
 none        -                          nothing (retrieval only, no generated answers)
 ollama      qwen2.5:3b                 Ollama running locally (fits a 4 GB GPU)
+groq        openai/gpt-oss-120b        GROQ_API_KEY (free tier, no card), pip install langchain-groq
 anthropic   claude-haiku-5-5           ANTHROPIC_API_KEY, pip install langchain-anthropic
 openai      gpt-4o-mini                OPENAI_API_KEY, pip install langchain-openai
 =========== ========================== ==============================================
@@ -18,8 +19,14 @@ from __future__ import annotations
 import importlib.util
 import os
 
-PROVIDERS = ("none", "ollama", "anthropic", "openai")
-DEFAULT_MODELS = {"ollama": "qwen2.5:3b", "anthropic": "claude-haiku-5-5", "openai": "gpt-4o-mini"}
+PROVIDERS = ("none", "ollama", "groq", "anthropic", "openai")
+DEFAULT_MODELS = {
+    "ollama": "qwen2.5:3b",
+    # Groq's free tier retired Llama 3.3 70B on 2026-08-16; gpt-oss-120b is its replacement.
+    "groq": "openai/gpt-oss-120b",
+    "anthropic": "claude-haiku-5-5",
+    "openai": "gpt-4o-mini",
+}
 # Keep the local model in memory between questions: reloading it costs many seconds.
 OLLAMA_KEEP_ALIVE = "30m"
 # Answers here are a few sentences or one SQL query; a cap bounds the worst case.
@@ -73,6 +80,7 @@ def available_providers() -> dict[str, list[str]]:
         if models:
             found["ollama"] = models
     for provider, key, package in (
+        ("groq", "GROQ_API_KEY", "langchain_groq"),
         ("anthropic", "ANTHROPIC_API_KEY", "langchain_anthropic"),
         ("openai", "OPENAI_API_KEY", "langchain_openai"),
     ):
@@ -103,6 +111,21 @@ def get_chat_model(provider: str | None = None, model: str | None = None, temper
             base_url=ollama_host(),
             keep_alive=OLLAMA_KEEP_ALIVE,
             num_predict=MAX_OUTPUT_TOKENS,
+        )
+    if provider == "groq":
+        from langchain_groq import ChatGroq
+
+        extra = {}
+        if model.startswith("openai/gpt-oss"):
+            # A reasoning model: low effort keeps answers fast and within the free tier's
+            # tokens-per-minute limit. Reasoning tokens count towards max_tokens.
+            extra["reasoning_effort"] = "low"
+        return ChatGroq(
+            model=model,
+            temperature=temperature,
+            max_tokens=2 * MAX_OUTPUT_TOKENS,
+            max_retries=1,
+            **extra,
         )
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -167,3 +190,16 @@ def describe_timing(llm_calls: list[dict], tool_seconds: float = 0.0) -> str:
         parts.append(f"writing {int(total('output_tokens')):,} tokens{took}")
     detail = f" ({', '.join(parts)})" if parts else ""
     return f"model {model}s in {len(llm_calls)} call(s){detail} · tools {round(tool_seconds, 2)}s"
+
+
+def is_rate_limited(exc: BaseException) -> bool:
+    """True for 'too many requests' errors (HTTP 429) from any provider."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if getattr(exc, "status_code", None) == 429 or type(exc).__name__ == "RateLimitError":
+            return True
+        if "429" in str(exc) and "rate" in str(exc).lower():
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
