@@ -14,7 +14,7 @@ PAGES = ["Overview", "Analytics", "Win probability", "Synthetic data", "Ask", "A
 
 
 def main() -> None:
-    st.set_page_config(page_title="Cricket AI", page_icon=":cricket_bat_and_ball:", layout="wide")
+    st.set_page_config(page_title="Cricket AI", page_icon="🏏", layout="wide")
 
     with st.sidebar:
         st.header("Cricket AI")
