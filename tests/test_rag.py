@@ -456,3 +456,44 @@ def test_rewrite_that_answers_instead_is_ignored(retriever, sql):
     rambling = "Sure! Here is the rewritten question:\nHow many runs did B2 score?"
     rag = CricketRAG(retriever, sql, fake_llm(rambling))
     assert rag.condense("and B2?", history) == "and B2?"
+
+
+def test_groq_provider(monkeypatch):
+    pytest.importorskip("langchain_groq")
+    from cricket_ai import llm
+
+    monkeypatch.setattr(llm, "ollama_models", lambda timeout=1.0: [])
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    assert "groq" not in llm.available_providers()
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    assert llm.available_providers()["groq"] == ["openai/gpt-oss-120b"]
+
+    chat = llm.get_chat_model("groq")
+    assert type(chat).__name__ == "ChatGroq"
+    assert chat.model_name == "openai/gpt-oss-120b"
+    assert chat.reasoning_effort == "low"  # keeps answers inside the free tokens-per-minute
+    other = llm.get_chat_model("groq", "qwen/qwen3.8-27b")
+    assert other.reasoning_effort is None  # only gpt-oss models take reasoning_effort
+
+
+def test_rate_limit_detection():
+    from cricket_ai.llm import is_rate_limited
+
+    class RateLimitError(Exception):
+        pass
+
+    class HTTPError(Exception):
+        status_code = 429
+
+    assert is_rate_limited(RateLimitError("slow down"))
+    assert is_rate_limited(HTTPError("x"))
+    try:
+        try:
+            raise RateLimitError("inner")
+        except RateLimitError as inner:
+            raise RuntimeError("wrapped by a library") from inner
+    except RuntimeError as outer:
+        assert is_rate_limited(outer)
+    assert is_rate_limited(Exception("Error code: 429 - rate limit reached for model"))
+    assert not is_rate_limited(ValueError("bad SQL near 429"))
+    assert not is_rate_limited(ConnectionError("refused"))

@@ -416,3 +416,36 @@ def test_no_limits_means_nothing_counted(app, monkeypatch):
     monkeypatch.setattr(state, "providers", lambda: OLLAMA)
     at = open_page(app, "Ask", provider="ollama")
     assert not any("Questions left" in c.value for c in at.sidebar.caption)
+
+
+class Busy(GenericFakeChatModel):
+    """A model that always answers 'too many requests', like a free tier at its limit."""
+
+    def invoke(self, *args, **kwargs):
+        class RateLimitError(Exception):
+            status_code = 429
+
+        raise RateLimitError("Error code: 429 - Rate limit reached for model openai/gpt-oss-120b")
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def test_rate_limited_ask_still_answers_from_sources(app, monkeypatch):
+    monkeypatch.setattr(state, "chat_model", lambda p, m: Busy(messages=iter([])))
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    at = open_page(app, "Ask", provider="ollama")
+    at.chat_input[0].set_value("Who won the match on 1 April 2020?").run()
+    assert not at.exception and not at.error
+    assert any("busy right now" in w.value for w in at.warning)
+    assert at.chat_message[1].markdown[0].value == "Here are the most relevant sources."
+    assert any(e.label == "Sources (5)" for e in at.expander)
+
+
+def test_rate_limited_agent_says_try_again(app, monkeypatch):
+    monkeypatch.setattr(state, "chat_model", lambda p, m: Busy(messages=iter([])))
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    at = open_page(app, "Agent", provider="ollama")
+    at.chat_input[0].set_value("Who has the most runs?").run()
+    assert not at.exception and not at.error
+    assert any("try again in a minute" in w.value for w in at.warning)

@@ -16,6 +16,7 @@ import threading
 import streamlit as st
 
 SECRET_KEYS = (
+    "GROQ_API_KEY",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
     "CRICKET_AI_LLM",

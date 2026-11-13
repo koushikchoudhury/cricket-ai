@@ -179,8 +179,20 @@ def chat_model(provider: str, model: str | None):
     return get_chat_model(provider, model)
 
 
+RATE_LIMITED = (
+    "The free language model is busy right now (its per-minute limit is shared by everyone "
+    "using this demo). Please try again in a minute."
+)
+
+
 def llm_error(exc: Exception, provider: str) -> None:
+    from cricket_ai.llm import is_rate_limited
+
+    if is_rate_limited(exc):
+        st.warning(RATE_LIMITED)
+        return
     hint = {
+        "groq": "Is GROQ_API_KEY set, and is `langchain-groq` installed?",
         "ollama": "Is Ollama running, and is the model pulled (`ollama pull <model>`)?",
         "anthropic": "Is ANTHROPIC_API_KEY set and `langchain-anthropic` installed?",
         "openai": "Is OPENAI_API_KEY set and `langchain-openai` installed?",
