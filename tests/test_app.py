@@ -224,3 +224,13 @@ def test_gan_generates_on_demand(app):
     assert not at.exception
     assert any(m.label == "Valid cricket" for m in at.metric)
     assert any("Generated" in c.value for c in at.caption)
+
+
+def test_page_icon_is_an_emoji_not_a_shortcode():
+    # ':cricket_bat_and_ball:' was not a known shortcode, so Streamlit served it as a file
+    # path, and on Windows a path with colons raises OSError on every page load.
+    import re
+
+    source = Path(MAIN).read_text(encoding="utf-8")
+    icon = re.search(r'page_icon="([^"]*)"', source).group(1)
+    assert len(icon) <= 2 and ":" not in icon
