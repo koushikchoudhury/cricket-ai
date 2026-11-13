@@ -258,6 +258,16 @@ leaderboard tool. Reading the answers showed the score was still too high:
 - [x] Cached loaders keyed by file time, so rebuilt data and retrained models are picked up
 - [x] Friendly "not built yet" messages with the command to run; LLM errors shown, not raised
 - [x] `cricket-ai app`; headless tests of every page and the main flows (Streamlit AppTest)
+- [x] Only language models usable right now are offered (Ollama running with models pulled,
+      or an API key and package present); Ollama models picked from the installed list
+- [x] Speed (first real use: 18.6s for a one-tool question): Ollama keeps the model loaded for
+      30 minutes and is warmed up in the background when Ask or Agent opens; the search embedder
+      runs on the CPU so it does not compete with the LLM for 4 GB of GPU memory; the agent sends a
+      short SQL hint instead of the full schema with every call; output capped at 512 tokens
+- [x] Each answer shows where its time went (model loading / reading / writing, tools) and live
+      progress while the agent works
+- [x] Follow-up questions keep context (last three question/answer pairs); "how about kohli?"
+      after a 2020 question now means Kohli in 2020
 - [ ] Page for module 3 when it exists
 - [ ] Docker image and deployment (module 6)
 

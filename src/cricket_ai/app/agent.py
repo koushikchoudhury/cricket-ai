@@ -40,6 +40,27 @@ def show_tools(calls: list[dict]) -> None:
             st.code(call["output"], language=None)
 
 
+def show_timing(turn: dict) -> None:
+    if not turn.get("timing"):
+        return
+    st.caption(f"{turn['seconds']}s: {turn['timing']}")
+    loading = sum(c.get("load_s") or 0 for c in turn.get("llm_calls", []))
+    if loading >= 2:
+        st.caption(
+            f"{loading:.1f}s of that was Ollama loading the model into memory. It now stays "
+            "loaded for 30 minutes, so the next answers skip this."
+        )
+
+
+def describe(event: dict) -> str | None:
+    if event["type"] == "tool_call":
+        args = ", ".join(f"{k}={v!r}" for k, v in event["args"].items())
+        return f"Calling **{event['name']}**({args})"
+    if event["type"] == "writing":
+        return "Writing the answer ..."
+    return None
+
+
 def render(p: state.Paths, provider: str, model: str | None) -> None:
     st.title("Agent")
     st.write(
@@ -91,24 +112,42 @@ def render(p: state.Paths, provider: str, model: str | None) -> None:
         with st.chat_message(turn["role"]):
             st.markdown(turn["content"])
             show_tools(turn.get("tools", []))
+            show_timing(turn)
 
     question = st.chat_input("Ask about matches, players, chases or synthetic overs")
     question = question or st.session_state.pop("agent_pending", None)
     if not question:
         return
 
+    earlier = [{"role": t["role"], "content": t["content"]} for t in history]
     history.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
     with st.chat_message("assistant"):
         try:
-            with st.spinner("Working ..."):
-                result = agent.ask(question)
+            with st.status("Choosing a tool ...", expanded=True) as status:
+
+                def progress(event: dict) -> None:
+                    line = describe(event)
+                    if line:
+                        status.write(line)
+                        status.update(label=line.replace("**", ""))
+
+                result = agent.ask(question, history=earlier, on_event=progress)
+                status.update(label=f"Done in {result.seconds}s", state="complete", expanded=False)
         except Exception as exc:  # noqa: BLE001
             state.llm_error(exc, provider)
             history.pop()
             return
+        turn = {
+            "role": "assistant",
+            "content": result.answer,
+            "tools": result.tool_calls,
+            "seconds": result.seconds,
+            "timing": result.timing,
+            "llm_calls": result.llm_calls,
+        }
         st.markdown(result.answer)
         show_tools(result.tool_calls)
-        st.caption(f"{result.steps} tool round(s) · {result.seconds}s")
-    history.append({"role": "assistant", "content": result.answer, "tools": result.tool_calls})
+        show_timing(turn)
+    history.append(turn)
