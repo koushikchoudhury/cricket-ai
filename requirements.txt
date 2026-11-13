@@ -1,0 +1,5 @@
+# For Streamlit Community Cloud. Locally, use `pip install -e ".[app,...]"` instead.
+# CPU-only PyTorch: the host has no GPU, and the CUDA build is several GB larger.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+.[app,winprob,synthetic,rag,agent,embeddings,anthropic,openai]

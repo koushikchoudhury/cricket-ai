@@ -356,3 +356,63 @@ def test_ollama_is_warmed_up_once_in_the_background(app, monkeypatch):
 def test_each_page_renders_only_itself(app, page):
     at = open_page(app, page)
     assert [t.value for t in at.title] == ["Cricket AI" if page == "Overview" else page]
+
+
+def test_question_budget_falls_back_to_sources(app, monkeypatch):
+    # Hosted demo: 1 question per visitor. The second gets sources, not a model answer.
+    monkeypatch.setenv("CRICKET_AI_SESSION_LIMIT", "1")
+    monkeypatch.setenv("CRICKET_AI_DAILY_LIMIT", "10")
+    replies = iter([AIMessage("```sql\nSELECT 60 AS n\n```"), AIMessage("There are 60.")])
+    monkeypatch.setattr(
+        state, "chat_model", lambda provider, model: GenericFakeChatModel(messages=replies)
+    )
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    at = open_page(app, "Ask", provider="ollama")
+    assert any("1 for you, 10 today" in c.value for c in at.sidebar.caption)
+
+    at.chat_input[0].set_value("How many matches are there?").run()
+    assert at.chat_message[1].markdown[0].value == "There are 60."
+    at.chat_input[0].set_value("How many matches were in 2020?").run()
+    assert not at.exception
+    assert any("used your 1 questions for this visit" in i.value for i in at.info)
+    assert at.chat_message[3].markdown[0].value == "Here are the most relevant sources."
+    assert any("0 for you, 9 today" in c.value for c in at.sidebar.caption)
+
+
+def test_daily_budget_is_shared_between_visitors(app, monkeypatch):
+    from cricket_ai.app import cloud
+
+    monkeypatch.setenv("CRICKET_AI_DAILY_LIMIT", "1")
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    monkeypatch.setattr(
+        state, "chat_model", lambda p, m: Scripted(messages=iter([AIMessage("ok")] * 4))
+    )
+    cloud._ledger.clear()
+    first = open_page(app, "Agent", provider="ollama")
+    first.chat_input[0].set_value("hello").run()
+    second = open_page(AppTest.from_file(MAIN, default_timeout=180), "Agent", provider="ollama")
+    second.chat_input[0].set_value("hello").run()
+    assert not second.exception
+    assert any("Today's limit of 1 questions" in i.value for i in second.info)
+    assert len(second.chat_message) == 0
+
+
+def test_secrets_become_environment(app, monkeypatch):
+    import os
+
+    monkeypatch.delenv("CRICKET_AI_SESSION_LIMIT", raising=False)
+    app.secrets["CRICKET_AI_SESSION_LIMIT"] = "5"
+    app.secrets["UNRELATED"] = "ignored"
+    at = app.run()
+    assert not at.exception
+    assert os.environ.get("CRICKET_AI_SESSION_LIMIT") == "5"
+    assert "UNRELATED" not in os.environ
+    monkeypatch.delenv("CRICKET_AI_SESSION_LIMIT", raising=False)
+
+
+def test_no_limits_means_nothing_counted(app, monkeypatch):
+    monkeypatch.delenv("CRICKET_AI_DAILY_LIMIT", raising=False)
+    monkeypatch.delenv("CRICKET_AI_SESSION_LIMIT", raising=False)
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    at = open_page(app, "Ask", provider="ollama")
+    assert not any("Questions left" in c.value for c in at.sidebar.caption)

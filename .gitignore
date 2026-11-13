@@ -34,3 +34,6 @@ kubeconfig*
 .DS_Store
 .idea/
 .vscode/
+
+# Streamlit secrets (API keys)
+.streamlit/secrets.toml

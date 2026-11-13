@@ -169,6 +169,10 @@ cricket-ai app            # opens http://localhost:8501
 Pages explain what to run when something is not built yet, and the language model for Ask and
 Agent is chosen in the sidebar (none, Ollama, Anthropic or OpenAI).
 
+To share the app with others, see [DEPLOY.md](DEPLOY.md): a tunnel from your laptop for live
+demos, or a permanent free deployment on Streamlit Community Cloud with an API key and a
+daily question cap.
+
 ## Repository layout
 
 ```
