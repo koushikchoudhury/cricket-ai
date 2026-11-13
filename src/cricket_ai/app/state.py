@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -123,7 +124,9 @@ def gan(p: Paths):
 def _retriever(directory: str, _mtime: float):
     from cricket_ai.rag.retrieval import HybridRetriever
 
-    return HybridRetriever.load(Path(directory))
+    # CPU on purpose: embedding one question takes milliseconds, and the GPU's memory is
+    # left for the language model.
+    return HybridRetriever.load(Path(directory), device="cpu")
 
 
 def retriever(p: Paths):
@@ -141,6 +144,32 @@ def _sql(processed: str, _mtime: float):
 def sql(p: Paths):
     matches = p.processed / "matches.parquet"
     return _sql(str(p.processed), mtime(matches)) if matches.exists() else None
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def providers() -> dict[str, list[str]]:
+    """Language models usable right now (rechecked every 20 seconds)."""
+    from cricket_ai.llm import available_providers
+
+    return available_providers()
+
+
+@st.cache_resource(show_spinner=False)
+def _warm_up(model: str) -> threading.Thread:
+    from cricket_ai.llm import warm_up_ollama
+
+    thread = threading.Thread(target=warm_up_ollama, args=(model,), daemon=True)
+    thread.start()
+    return thread
+
+
+def warm_up(provider: str, model: str | None) -> None:
+    """Start loading the local model in the background as soon as a page needs it.
+
+    Runs once per model while the app is up; the page does not wait for it.
+    """
+    if provider == "ollama" and model:
+        _warm_up(model)
 
 
 @st.cache_resource(show_spinner="Connecting to the language model ...")

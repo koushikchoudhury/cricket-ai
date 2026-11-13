@@ -296,3 +296,57 @@ def test_repeats_report_mean_range_and_flaky_tasks(ctx, tmp_path):
     assert summary["consistency"] == 0.0
     report = (tmp_path / "report.md").read_text()
     assert "range 0%-100% over 2 runs" in report and "changed verdict" in report
+
+
+class Recording(Scripted):
+    """Scripted model that remembers what it was sent."""
+
+    seen: list = []
+
+    def invoke(self, messages, *args, **kwargs):
+        type(self).seen.append([(m.type, m.content) for m in messages])
+        return super().invoke(messages, *args, **kwargs)
+
+
+def test_follow_up_questions_get_the_conversation(ctx):
+    Recording.seen = []
+    llm = Recording(messages=iter([AIMessage("Kohli did well in 2020.")]))
+    history = [
+        {"role": "user", "content": "How did JJ Bumrah bowl in the 2020 season?"},
+        {"role": "assistant", "content": "He took 27 wickets."},
+    ]
+    CricketAgent(llm, ctx).ask("how about kohli?", history=history)
+    sent = Recording.seen[0]
+    assert [kind for kind, _ in sent] == ["system", "human", "ai", "human"]
+    assert "2020 season" in sent[1][1] and sent[3][1] == "how about kohli?"
+    assert "keeps the same season" in sent[0][1]
+
+
+def test_progress_events_and_timing(ctx):
+    events = []
+    llm = scripted([("player_stats", {"player": "B1"})], "16 runs.")
+    r = CricketAgent(llm, ctx).ask("B1 runs?", on_event=events.append)
+    assert [e["type"] for e in events] == ["tool_call", "tool_result", "writing"]
+    assert events[0]["name"] == "player_stats" and events[0]["args"] == {"player": "B1"}
+    assert len(r.llm_calls) == 2 and r.steps == 1
+    assert r.timing.startswith("model ") and "in 2 call(s)" in r.timing and "tools" in r.timing
+
+
+def test_player_stats_shows_one_player_and_names_the_rest(ctx):
+    tool = {t.name: t for t in build_tools(ctx)}["player_stats"]
+    out = tool.invoke({"player": "Kol"})
+    assert out.count("BATTING:") == 1  # one player in full, not three
+    assert "Other players matching 'Kol':" in out and "Ask by full name" in out
+    exact = tool.invoke({"player": "Kol_1"})
+    assert exact.startswith("Kol_1, all seasons.")  # exact name wins over Kol_10, Kol_11
+
+
+def test_agent_prompt_is_compact(ctx):
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    from cricket_ai.agent.graph import SYSTEM_PROMPT
+
+    size = len(SYSTEM_PROMPT) + sum(
+        len(json.dumps(convert_to_openai_tool(t))) for t in build_tools(ctx)
+    )
+    assert size < 4000  # sent with every model call; was ~5,300 before the SQL hint was cut

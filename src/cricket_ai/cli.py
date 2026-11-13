@@ -498,6 +498,7 @@ def agent_ask(
     typer.echo(f"\n{result.answer}\n")
     for c in result.tool_calls:
         typer.echo(f"  -> {c['name']}({c['args']})  {c['seconds']}s{'' if c['ok'] else '  ERROR'}")
+    typer.echo(f"  timing: {result.timing}")
     trace = write_trace(result, config.REPORTS_DIR / dataset / "agent")
     typer.echo(f"[{result.steps} tool rounds, {result.seconds}s; trace: {trace}]")
 

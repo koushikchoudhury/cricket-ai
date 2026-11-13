@@ -24,10 +24,20 @@ import pandas as pd
 from langchain_core.tools import StructuredTool
 
 from cricket_ai.rag.retrieval import HybridRetriever
-from cricket_ai.rag.sql import SCHEMA, CricketSQL
+from cricket_ai.rag.sql import CricketSQL
 from cricket_ai.winprob.predict import chase_probability, overs_to_balls
 
 EXPENSIVE_TOOLS = {"generate_synthetic_overs"}
+# The agent sends every tool description with every model call, so this is the short form
+# of rag.sql.SCHEMA (which the RAG pipeline still uses in full when it writes SQL).
+AGENT_SQL_HINT = (
+    "Tables: matches(match_id, season TEXT e.g. '2016', start_date, team1, team2, venue, "
+    "winner, event_stage, player_of_match); batting(match_id, season, batting_team, player, "
+    "runs, balls, not_out), one row per batter per innings; bowling(match_id, season, "
+    "bowling_team, player, balls, runs_conceded, wickets); deliveries(match_id, innings, "
+    "over 0-based, batter, bowler, runs_batter, runs_total, is_wicket, is_super_over). "
+    "Names have initials: use player ILIKE '%Kohli%'."
+)
 MAX_TOOL_CHARS = 4000
 
 
@@ -51,12 +61,14 @@ class CricketContext:
 
     @classmethod
     def from_dataset(
-        cls, processed: Path, models: Path, device: str | None = None
+        cls, processed: Path, models: Path, device: str | None = "cpu"
     ) -> CricketContext:
         ctx = cls()
         if (processed / "matches.parquet").exists():
             ctx.sql = CricketSQL.from_dir(processed)
         if (processed / "rag" / "index.json").exists():
+            # Embedding one question is quick on the CPU, and it leaves the GPU's memory to
+            # the language model (on a 4 GB card they otherwise compete).
             ctx.retriever = HybridRetriever.load(processed / "rag", device=device)
         try:
             from cricket_ai.winprob.model import load
@@ -132,15 +144,26 @@ def player_stats(ctx: CricketContext, player: str, season: str | int | None = No
             if not (bat.empty and bowl.empty):
                 note = f"No exact match for '{player}'; matched by surname '{surname}'. "
     when = f"the {season} season" if season else "all seasons"
-    runs_by = bat.set_index("player").runs
-    names = sorted(set(bat.player) | set(bowl.player), key=lambda n: -runs_by.get(n, 0))
+    bat_i, bowl_i = bat.set_index("player"), bowl.set_index("player")
+    names = sorted(set(bat.player) | set(bowl.player))
     if not names:
         return f"No player matching '{player}' in {when}."
+
+    query = player.strip().lower()
+
+    def rank(name: str) -> tuple:
+        # exact name first, then same surname, then whoever played most
+        played = bat_i.innings.get(name, 0) + bowl_i.matches.get(name, 0)
+        return (name.lower() != query, name.lower().split()[-1] != query.split()[-1], -played)
+
+    names.sort(key=rank)
     lines = [note.strip()] if note else []
+    text = _player_lines(names[:1], bat_i, bowl_i, when, lines)
     if len(names) > 1:
-        lines.append(f"{len(names)} players match; showing up to 3.")
-    bat_i, bowl_i = bat.set_index("player"), bowl.set_index("player")
-    return _player_lines(names, bat_i, bowl_i, when, lines)
+        # One player in full keeps the reply short and unambiguous; the rest are named only.
+        others = ", ".join(names[1:6]) + (" and more" if len(names) > 6 else "")
+        text += f"\nOther players matching '{player}': {others}. Ask by full name for those."
+    return text
 
 
 def _player_rows(ctx: CricketContext, like: str, season: str | None):
@@ -380,7 +403,7 @@ def build_tools(ctx: CricketContext) -> list[StructuredTool]:
                 run_sql,
                 "run_sql",
                 "Run one read-only DuckDB SELECT for anything the other tools cannot answer "
-                "(team totals, records, custom filters).\n" + SCHEMA,
+                "(team totals, records, custom filters). " + AGENT_SQL_HINT,
             )
         )
     if ctx.winprob_model is not None:

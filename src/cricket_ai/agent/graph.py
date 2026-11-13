@@ -28,7 +28,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from cricket_ai.agent.tools import EXPENSIVE_TOOLS, CricketContext, build_tools
-from cricket_ai.llm import message_text
+from cricket_ai.llm import call_stats, describe_timing, message_text
 
 SYSTEM_PROMPT = """You are a cricket analyst with tools over a ball-by-ball database.
 - Use a tool for any fact, number or result; never answer those from memory.
@@ -39,8 +39,11 @@ SYSTEM_PROMPT = """You are a cricket analyst with tools over a ball-by-ball data
 - Copy every number exactly as the tool or the question gives it. Do not recompute,
   round differently or restate the match situation in other numbers.
 - Batting and bowling are separate: "runs conceded" by a bowler are never runs scored.
+- Earlier turns are context: a follow-up such as "how about Kohli?" keeps the same season
+  and the same aspect (batting or bowling) unless the user changes them.
 - When you have the answer, reply in one to three sentences and say which tool it came from.
 """
+HISTORY_MESSAGES = 6  # the last three question/answer pairs
 
 
 class AgentState(TypedDict):
@@ -56,10 +59,16 @@ class AgentResult:
     steps: int = 0
     seconds: float = 0.0
     stopped_by_limit: bool = False
+    llm_calls: list[dict] = field(default_factory=list)
 
     @property
     def tools_used(self) -> list[str]:
         return [c["name"] for c in self.tool_calls]
+
+    @property
+    def timing(self) -> str:
+        """Where the time went: model loading, reading, writing, and tools."""
+        return describe_timing(self.llm_calls, sum(c["seconds"] for c in self.tool_calls))
 
 
 class CricketAgent:
@@ -80,11 +89,14 @@ class CricketAgent:
         self.llm = llm.bind_tools(self.tools)
         self.max_steps = max_steps
         self.approver = approver or (lambda name, args: True)
+        self._llm_calls: list[dict] = []
         self.graph = self._build()
 
     # ----- nodes -----
     def _agent(self, state: AgentState) -> dict:
+        start = time.perf_counter()
         reply = self.llm.invoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])
+        self._llm_calls.append(call_stats(reply, time.perf_counter() - start))
         return {"messages": [reply]}
 
     def _tools(self, state: AgentState) -> dict:
@@ -131,21 +143,56 @@ class CricketAgent:
         return g.compile()
 
     # ----- running -----
-    def ask(self, question: str) -> AgentResult:
+    def ask(
+        self,
+        question: str,
+        history: list[dict] | None = None,
+        on_event: Callable[[dict], None] | None = None,
+    ) -> AgentResult:
+        """Answer one question.
+
+        ``history`` is earlier turns as ``{"role": "user"|"assistant", "content": str}`` so
+        follow-ups keep their context. ``on_event`` receives progress as it happens:
+        ``{"type": "tool_call", "name", "args"}``, ``{"type": "tool_result", "name"}`` and
+        ``{"type": "writing"}``.
+        """
         start = time.perf_counter()
         first_call = len(self.ctx.calls)
-        state = self.graph.invoke(
-            {"messages": [HumanMessage(question)], "steps": 0},
+        self._llm_calls = []
+        notify = on_event or (lambda event: None)
+        messages: list[BaseMessage] = [
+            (HumanMessage if turn["role"] == "user" else AIMessage)(turn["content"])
+            for turn in (history or [])[-HISTORY_MESSAGES:]
+        ]
+        messages.append(HumanMessage(question))
+
+        final, steps = None, 0
+        stream = self.graph.stream(
+            {"messages": messages, "steps": 0},
             {"recursion_limit": 4 * self.max_steps + 10},
+            stream_mode="updates",
         )
-        final = state["messages"][-1]
+        for update in stream:
+            for node, change in update.items():
+                final = change["messages"][-1]
+                if node == "agent":
+                    for call in getattr(final, "tool_calls", None) or []:
+                        notify({"type": "tool_call", "name": call["name"], "args": call["args"]})
+                elif node == "tools":
+                    steps = change.get("steps", steps)
+                    for reply in change["messages"]:
+                        notify({"type": "tool_result", "name": reply.name})
+                    notify({"type": "writing"})
         return AgentResult(
             question=question,
             answer=message_text(final).strip(),
             tool_calls=[asdict(c) for c in self.ctx.calls[first_call:]],
-            steps=state.get("steps", 0),
+            steps=steps,
             seconds=round(time.perf_counter() - start, 2),
-            stopped_by_limit=final.content.startswith("I stopped after reaching the step limit"),
+            stopped_by_limit=message_text(final).startswith(
+                "I stopped after reaching the step limit"
+            ),
+            llm_calls=list(self._llm_calls),
         )
 
     def mermaid(self) -> str:

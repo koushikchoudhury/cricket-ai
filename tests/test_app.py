@@ -87,9 +87,13 @@ def app(project, monkeypatch):
     monkeypatch.setattr(config, "REPORTS_DIR", project / "reports")
     monkeypatch.setattr(config, "MODELS_DIR", project / "models")
     monkeypatch.delenv("CRICKET_AI_LLM", raising=False)
+    monkeypatch.setattr(state, "providers", lambda: {"none": []})
     st.cache_data.clear()
     st.cache_resource.clear()
     return AppTest.from_file(MAIN, default_timeout=180)
+
+
+OLLAMA = {"none": [], "ollama": ["llama3.2:1b", "qwen2.5:3b"]}
 
 
 def open_page(app: AppTest, page: str, provider: str | None = None) -> AppTest:
@@ -154,6 +158,7 @@ def test_ask_with_llm_shows_answer_and_sql(app, monkeypatch):
     monkeypatch.setattr(
         state, "chat_model", lambda provider, model: GenericFakeChatModel(messages=replies)
     )
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
     at = open_page(app, "Ask", provider="ollama")
     at.text_input(key="ask_question").set_value("How many matches are there?")
     button(at, "Ask").click().run()
@@ -175,11 +180,13 @@ def test_agent_needs_a_model_then_chats(app, monkeypatch):
         ]
     )
     monkeypatch.setattr(state, "chat_model", lambda provider, model: Scripted(messages=replies))
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
     at = open_page(at, "Agent", provider="ollama")
     at.chat_input[0].set_value("Who has the most runs?").run()
     assert not at.exception
     assert [m.name for m in at.chat_message] == ["user", "assistant"]
-    assert "Kol_1 has scored the most runs" in at.chat_message[1].markdown[0].value
+    said = [m.value for m in at.chat_message[1].markdown]
+    assert any("Kol_1 has scored the most runs" in text for text in said)
     assert any("Tools used: leaderboard" in e.label for e in at.expander)
 
 
@@ -189,6 +196,7 @@ def test_llm_failure_is_shown_not_raised(app, monkeypatch):
             raise ConnectionError("connection refused")
 
     monkeypatch.setattr(state, "chat_model", lambda p, m: Broken(messages=iter([])))
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
     at = open_page(app, "Agent", provider="ollama")
     at.chat_input[0].set_value("hello").run()
     assert not at.exception
@@ -234,3 +242,73 @@ def test_page_icon_is_an_emoji_not_a_shortcode():
     source = Path(MAIN).read_text(encoding="utf-8")
     icon = re.search(r'page_icon="([^"]*)"', source).group(1)
     assert len(icon) <= 2 and ":" not in icon
+
+
+def sidebar_select(at: AppTest, label: str):
+    return next((s for s in at.sidebar.selectbox if s.label == label), None)
+
+
+def test_sidebar_offers_only_available_models(app, monkeypatch):
+    at = open_page(app, "Agent")
+    assert sidebar_select(at, "Provider").options == ["none"]
+    assert any("No language model found" in c.value for c in at.sidebar.caption)
+    assert sidebar_select(at, "Model") is None
+
+    # Ollama running with two models pulled: a new session offers and selects it
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    at = open_page(AppTest.from_file(MAIN, default_timeout=180), "Agent")
+    provider = sidebar_select(at, "Provider")
+    assert provider.options == ["none", "ollama"]  # no anthropic / openai without a key
+    assert provider.value == "ollama"
+    model = sidebar_select(at, "Model")
+    assert model.options == ["llama3.2:1b", "qwen2.5:3b"] and model.value == "qwen2.5:3b"
+
+
+def test_agent_shows_progress_and_timing(app, monkeypatch):
+    usage = {
+        "load_duration": 9_500_000_000,
+        "prompt_eval_count": 1200,
+        "prompt_eval_duration": 2_000_000_000,
+        "eval_count": 40,
+        "eval_duration": 1_500_000_000,
+    }
+    replies = iter(
+        [
+            AIMessage(
+                "",
+                tool_calls=[{"name": "leaderboard", "args": {"stat": "runs"}, "id": "c1"}],
+                response_metadata=usage,
+            ),
+            AIMessage("Kol_1 leads.", response_metadata={**usage, "load_duration": 0}),
+        ]
+    )
+    monkeypatch.setattr(state, "chat_model", lambda provider, model: Scripted(messages=replies))
+    monkeypatch.setattr(state, "providers", lambda: OLLAMA)
+    at = open_page(app, "Agent", provider="ollama")
+    at.chat_input[0].set_value("Who has the most runs?").run()
+    assert not at.exception
+    captions = " ".join(c.value for c in at.caption)
+    assert "loading 9.5s" in captions and "reading 2,400 tokens 4.0s" in captions
+    assert "writing 80 tokens 3.0s" in captions
+    assert "was Ollama loading the model into memory" in captions
+    assert any("Calling **leaderboard**" in m.value for m in at.markdown)
+
+
+def test_ollama_is_warmed_up_once_in_the_background(app, monkeypatch):
+    from cricket_ai import llm
+
+    monkeypatch.setattr(state, "providers", lambda: {"none": [], "ollama": ["qwen2.5:3b"]})
+    calls = []
+    monkeypatch.setattr(llm, "warm_up_ollama", lambda model, timeout=120.0: calls.append(model))
+    at = open_page(app, "Agent")
+    at = open_page(at, "Ask")
+    assert not at.exception
+    state._warm_up(next(iter(["qwen2.5:3b"]))).join(timeout=5)
+    assert calls == ["qwen2.5:3b"]  # once per model, however many pages and reruns
+    assert at.title[0].value == "Ask"  # the page still renders
+
+
+@pytest.mark.parametrize("page", ["Overview", "Analytics", "Ask"])
+def test_each_page_renders_only_itself(app, page):
+    at = open_page(app, page)
+    assert [t.value for t in at.title] == ["Cricket AI" if page == "Overview" else page]

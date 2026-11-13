@@ -330,3 +330,99 @@ def test_image_index(tmp_path):
     index.save(tmp_path / "idx")
     again = ImageIndex.load(tmp_path / "idx", FakeClip())
     assert again.search("wicket", k=1)[0].path.endswith("wicket_falls.jpg")
+
+
+def test_available_providers(monkeypatch):
+    from cricket_ai import llm
+
+    # Control which integration packages look installed, so the test does not depend on
+    # the machine (CI installs no provider packages).
+    installed = {"langchain_ollama", "langchain_anthropic"}
+    monkeypatch.setattr(
+        llm.importlib.util, "find_spec", lambda name: object() if name in installed else None
+    )
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setattr(llm, "ollama_models", lambda timeout=1.0: [])
+    assert llm.available_providers() == {"none": []}  # Ollama not running
+
+    monkeypatch.setattr(llm, "ollama_models", lambda timeout=1.0: ["qwen2.5:3b"])
+    assert llm.available_providers() == {"none": [], "ollama": ["qwen2.5:3b"]}
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")  # key set, but package missing
+    found = llm.available_providers()
+    assert found["anthropic"] == [llm.DEFAULT_MODELS["anthropic"]]
+    assert "openai" not in found
+
+    installed.discard("langchain_ollama")  # Ollama running, but its package missing
+    assert "ollama" not in llm.available_providers()
+
+
+def test_ollama_models_when_not_running(monkeypatch):
+    from cricket_ai import llm
+
+    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")  # nothing listens here
+    assert llm.ollama_models(timeout=0.5) == []
+
+
+def test_call_stats_and_timing_line():
+    from cricket_ai.llm import call_stats, describe_timing
+
+    ollama = AIMessage(
+        "x",
+        response_metadata={
+            "load_duration": 6_000_000_000,
+            "prompt_eval_count": 1000,
+            "prompt_eval_duration": 2_500_000_000,
+            "eval_count": 50,
+            "eval_duration": 4_000_000_000,
+        },
+    )
+    stats = call_stats(ollama, 12.61)
+    assert stats == {
+        "seconds": 12.61,
+        "load_s": 6.0,
+        "prompt_s": 2.5,
+        "output_s": 4.0,
+        "prompt_tokens": 1000,
+        "output_tokens": 50,
+    }
+    line = describe_timing([stats], tool_seconds=0.02)
+    assert line == (
+        "model 12.61s in 1 call(s) (loading 6.0s, reading 1,000 tokens 2.5s, "
+        "writing 50 tokens 4.0s) · tools 0.02s"
+    )
+    plain = call_stats(AIMessage("x"), 1.0)
+    assert (
+        plain["load_s"] is None
+        and describe_timing([plain]) == "model 1.0s in 1 call(s) · tools 0.0s"
+    )
+    assert describe_timing([]) == ""
+
+
+def test_warm_up_ollama(monkeypatch):
+    import requests
+
+    from cricket_ai import llm
+
+    sent = {}
+
+    class Reply:
+        ok = True
+
+    def fake_post(url, json, timeout):
+        sent.update(url=url, body=json)
+        return Reply()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    assert llm.warm_up_ollama("qwen2.5:3b")
+    assert sent["url"].endswith("/api/generate")
+    assert sent["body"] == {"model": "qwen2.5:3b", "prompt": "", "keep_alive": "30m"}
+
+    def refused(*args, **kwargs):
+        raise requests.ConnectionError("refused")
+
+    monkeypatch.setattr(requests, "post", refused)
+    assert llm.warm_up_ollama("qwen2.5:3b") is False
