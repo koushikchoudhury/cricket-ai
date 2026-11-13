@@ -335,20 +335,29 @@ def test_image_index(tmp_path):
 def test_available_providers(monkeypatch):
     from cricket_ai import llm
 
+    # Control which integration packages look installed, so the test does not depend on
+    # the machine (CI installs no provider packages).
+    installed = {"langchain_ollama", "langchain_anthropic"}
+    monkeypatch.setattr(
+        llm.importlib.util, "find_spec", lambda name: object() if name in installed else None
+    )
     for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(key, raising=False)
+
     monkeypatch.setattr(llm, "ollama_models", lambda timeout=1.0: [])
-    assert llm.available_providers() == {"none": []}
+    assert llm.available_providers() == {"none": []}  # Ollama not running
 
     monkeypatch.setattr(llm, "ollama_models", lambda timeout=1.0: ["qwen2.5:3b"])
     assert llm.available_providers() == {"none": [], "ollama": ["qwen2.5:3b"]}
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")  # key set, but package missing
     found = llm.available_providers()
-    assert ("anthropic" in found) == (
-        llm.importlib.util.find_spec("langchain_anthropic") is not None
-    )
+    assert found["anthropic"] == [llm.DEFAULT_MODELS["anthropic"]]
     assert "openai" not in found
+
+    installed.discard("langchain_ollama")  # Ollama running, but its package missing
+    assert "ollama" not in llm.available_providers()
 
 
 def test_ollama_models_when_not_running(monkeypatch):
